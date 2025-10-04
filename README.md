@@ -1,9 +1,8 @@
 # Pterodactyl Discord Bot
 
-Production-ready Discord bot that integrates with **Pterodactyl** Client (and optional Application) APIs.
-Includes modern Discord features (slash commands, ephemeral replies, buttons) and WebSocket monitoring.
+Production-ready Discord bot that integrates with **Jexpanel** Client (and optional Application) APIs.
 
-> **Note:** This scaffold doesn’t include your app code. Drop your existing `bot/` directory if you plan to build locally.
+
 > For production, we recommend using the **prebuilt container image** published by GitHub Actions to **GHCR**.
 
 ---
@@ -32,12 +31,6 @@ docker compose up -d
 ```
 Compose will pull `${IMAGE_REF}` and pass your `.env` into the container.
 
-> If your GHCR image is **private**, log in first:
-> ```bash
-> echo <PAT> | docker login ghcr.io -u <github-username> --password-stdin
-> ```
-> Your Personal Access Token needs **`write:packages`** or **`read:packages`** depending on usage.
-
 ### 3) Production mode
 In `.env`:
 ```
@@ -63,7 +56,7 @@ docker compose pull && docker compose up -d
 
 ---
 
-## Pterodactyl configuration
+## Jexpanel configuration
 
 - **Per-user keys**: users link their own **Client API** keys with `/link` (keys encrypted at rest via `ENCRYPTION_KEY`).
 - **Admin visibility** (`/panel_*`): set **Application API** key in `PTERO_APP_API_KEY` and your `PTERO_PANEL_URL`.
@@ -80,23 +73,6 @@ This repo includes `.github/workflows/docker-multiarch.yml` which builds **linux
 **Setup:**
 1. Repo Settings → Actions → General → Workflow permissions: **Read and write**.
 2. (Private images) Consumers must `docker login ghcr.io` with a PAT that has `read:packages`.
-
-**Optional: Docker Hub** push is included if you add secrets:
-- `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
-
----
-
-## Files of interest
-
-```
-.
-├─ .github/workflows/docker-multiarch.yml  # GHCR multi-arch builds
-├─ .env.example                            # copy to .env and fill
-├─ docker-compose.yml                      # uses prebuilt image: ${IMAGE_REF}
-├─ Dockerfile                              # only needed if you build locally
-├─ requirements.txt                        # template (adjust to your pins)
-└─ README.md
-```
 
 ---
 
