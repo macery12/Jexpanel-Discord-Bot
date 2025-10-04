@@ -20,16 +20,11 @@ Set **BOT_SYNC_SCOPE** and IDs:
 - `BOT_SYNC_SCOPE` — set `GUILD` during development, switch to `GLOBAL` for production
 - `DEV_GUILD_ID` — your test server ID (only when `BOT_SYNC_SCOPE=GUILD`)
 
-Set your **GHCR image reference** in `.env`:
-- `IMAGE_REF=ghcr.io/<owner>/<repo>:latest`  
-  Replace `<owner>` and `<repo>` with your GitHub org/user and repository name.
-
 ### 2) Pull & run with Docker Compose
 ```bash
 docker compose pull
 docker compose up -d
 ```
-Compose will pull `${IMAGE_REF}` and pass your `.env` into the container.
 
 ### 3) Production mode
 In `.env`:
@@ -69,10 +64,6 @@ docker compose pull && docker compose up -d
 This repo includes `.github/workflows/docker-multiarch.yml` which builds **linux/amd64** and **linux/arm64** images and pushes to **GHCR** on:
 - pushes to `main` → tags `latest` and `sha-<short>`
 - pushes of tags `vX.Y.Z` → also tag `vX.Y.Z`
-
-**Setup:**
-1. Repo Settings → Actions → General → Workflow permissions: **Read and write**.
-2. (Private images) Consumers must `docker login ghcr.io` with a PAT that has `read:packages`.
 
 ---
 

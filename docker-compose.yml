@@ -1,11 +1,9 @@
 services:
   bot:
-    image: ${IMAGE_REF}
+    image: ghcr.io/macery12/jexpanel-discord-bot:latest
     env_file: .env
     restart: unless-stopped
     volumes:
       - ./data:/data
     environment:
       - TZ=UTC
-    # If the image is in a private GHCR, make sure you've run:
-    #   echo <PAT> | docker login ghcr.io -u <github-username> --password-stdin
