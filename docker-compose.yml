@@ -1,9 +1,30 @@
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   bot:
     image: ghcr.io/macery12/jexpanel-discord-bot:latest
     env_file: .env
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
       - ./data:/data
     environment:
       - TZ=UTC
+
+volumes:
+  pg_data: {}

@@ -6,6 +6,7 @@ pydantic>=2.7
 pydantic-settings>=2.4
 python-dotenv>=1.0.1
 structlog>=24.1.0
+asyncpg>=0.29
 
 # Data & crypto
 SQLAlchemy>=2.0.30
