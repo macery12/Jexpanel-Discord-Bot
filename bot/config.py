@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # Panel (app admin only)
     panel_url: str = Field(alias="PTERO_PANEL_URL")
-    client_api_key: str = Field(alias="PTERO_CLIENT_API_KEY")  # legacy/compat
+    client_api_key: str | None = Field(default=None, alias="PTERO_CLIENT_API_KEY")  # now optional
     app_api_key: str | None = Field(default=None, alias="PTERO_APP_API_KEY")
 
     # Admin gating
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Storage & crypto
     database_url: str = Field(default="sqlite+aiosqlite:///./bot.db", alias="DATABASE_URL")
-    bot_data_key_b64: str = Field(alias="BOT_DATA_KEY")
+    bot_data_key_b64: str = Field(alias="ENCRYPTION_KEY")  # renamed from BOT_DATA_KEY
     data_key_version: int = Field(default=1, alias="DATA_KEY_VERSION")
     cred_purge_days: int = Field(default=7, alias="CRED_PURGE_DAYS")
 
@@ -57,10 +57,10 @@ class Settings(BaseSettings):
     def bot_data_key(self) -> bytes:
         raw = self.bot_data_key_b64.strip()
         if not raw:
-            raise ValueError("BOT_DATA_KEY is required (base64 32 bytes).")
+            raise ValueError("ENCRYPTION_KEY is required (base64, 32 bytes).")
         key = base64.b64decode(raw)
         if len(key) != 32:
-            raise ValueError("BOT_DATA_KEY must decode to exactly 32 bytes.")
+            raise ValueError("ENCRYPTION_KEY must decode to exactly 32 bytes.")
         return key
 
 settings = Settings()
