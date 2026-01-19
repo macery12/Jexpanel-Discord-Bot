@@ -541,7 +541,7 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     if "spark.lucko.me" in parsed.netloc or "sparkprofile" in url:
         # Extract the report ID from various URL formats
         path_parts = parsed.path.strip("/").split("/")
-        if len(path_parts) > 0:
+        if len(path_parts) > 0 and path_parts[-1]:
             report_id = path_parts[-1]
             # Construct raw data URL
             json_url = f"https://spark.lucko.me/{report_id}?raw=1"

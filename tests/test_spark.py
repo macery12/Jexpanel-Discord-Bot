@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -245,7 +244,8 @@ class TestDetectionRules:
         alerts = _detect_redstone_lag(records)
         
         assert len(alerts) > 0
-        assert "redstone" in alerts[0]["title"].lower() or "mechanical" in alerts[0]["title"].lower()
+        title_lower = alerts[0]["title"].lower()
+        assert "redstone" in title_lower or "mechanical" in title_lower
 
     def test_detect_scheduler_abuse(self):
         """Test detection of scheduler abuse."""
@@ -319,6 +319,15 @@ class TestAnalyzeSparkReport:
         """Test handling of invalid URLs."""
         with pytest.raises(ValueError, match="Invalid URL"):
             await analyze_spark_report("not-a-url")
+
+    @pytest.mark.asyncio
+    async def test_empty_report_id(self):
+        """Test handling of URLs without report ID."""
+        with pytest.raises(ValueError, match="Cannot extract report ID"):
+            await analyze_spark_report("https://spark.lucko.me/")
+        
+        with pytest.raises(ValueError, match="Cannot extract report ID"):
+            await analyze_spark_report("https://spark.lucko.me")
 
     @pytest.mark.asyncio
     async def test_valid_url_parsing(self):
