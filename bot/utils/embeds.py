@@ -1,5 +1,6 @@
 import discord
 
+
 def status_embed(*, name: str, uuid: str, node: str | None, allocation: str | None, power: str | None, stats: dict | None) -> discord.Embed:
     e = discord.Embed(title=f"{name}", description=f"`{uuid}`")
     if power:

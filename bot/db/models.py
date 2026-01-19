@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from datetime import datetime
-from sqlalchemy.orm import declarative_base, Mapped, mapped_column
-from sqlalchemy import Integer, String, DateTime, func, UniqueConstraint, Boolean, BigInteger
+
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column
 
 Base = declarative_base()
 

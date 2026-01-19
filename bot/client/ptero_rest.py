@@ -1,7 +1,10 @@
 from __future__ import annotations
-import aiohttp
+
 from typing import Any
+
+import aiohttp
 from yarl import URL
+
 
 class PteroClient:
     def __init__(self, session: aiohttp.ClientSession, panel_url: str, client_api_key: str):

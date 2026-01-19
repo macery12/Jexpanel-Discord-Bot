@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 import base64
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     # Discord & sync

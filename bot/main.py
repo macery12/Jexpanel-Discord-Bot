@@ -1,9 +1,15 @@
 from __future__ import annotations
-import asyncio, structlog, aiohttp, discord
+
+import asyncio
+
+import aiohttp
+import discord
+import structlog
 from discord.ext import commands, tasks
-from .config import settings
-from .db import init_db, SessionLocal
+
 from .client.ptero_app import PteroApp
+from .config import settings
+from .db import SessionLocal, init_db
 from .services.credentials import purge_old_credentials
 
 log = structlog.get_logger()
@@ -32,7 +38,7 @@ class Bot(commands.Bot):
 
         if settings.command_sync_scope == "dev" and settings.discord_guild_id:
             guild = discord.Object(id=settings.discord_guild_id)
-            self.tree.copy_global_to(guild=guild)
+            # Sync commands to the dev guild only (no copy_global_to to avoid duplicates)
             synced = await self.tree.sync(guild=guild)
             log.info("commands_synced", scope="dev", guild=settings.discord_guild_id, count=len(synced))
         else:

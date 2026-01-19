@@ -1,7 +1,13 @@
 from __future__ import annotations
-import os, base64, hashlib
+
+import base64
+import hashlib
+import os
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from .config import settings
+
 
 def _aad(discord_user_id: int, panel_url: str) -> bytes:
     return f"{discord_user_id}|{panel_url}".encode("utf-8")
