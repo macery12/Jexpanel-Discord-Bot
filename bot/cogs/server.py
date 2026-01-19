@@ -38,6 +38,31 @@ def _fmt_gib_mib_pair(used_bytes: int, limit_mib: int | None) -> tuple[str, floa
     return f"{used_s} / {lim_s} ({pct:.0f}%)", pct
 
 
+def _progress_bar(percentage: float | None, length: int = 10) -> str:
+    """Create a visual progress bar using Unicode block characters."""
+    if percentage is None:
+        return "▱" * length
+    pct = max(0.0, min(100.0, percentage))
+    filled = int((pct / 100.0) * length)
+    empty = length - filled
+    return "▰" * filled + "▱" * empty
+
+
+def _get_status_color(power: str, suspended: bool) -> int:
+    """Return embed color based on server status."""
+    if suspended:
+        return 0x95A5A6  # Gray for suspended
+    power_lower = power.lower()
+    if power_lower in ("running", "online"):
+        return 0x2ECC71  # Green for running
+    elif power_lower in ("starting", "stopping"):
+        return 0xF39C12  # Orange for transitioning
+    elif power_lower in ("offline", "stopped"):
+        return 0xE74C3C  # Red for offline
+    else:
+        return 0x3498DB  # Blue for unknown
+
+
 def _fmt_uptime(ms: int | None) -> str:
     if not ms or ms <= 0:
         return "—"
@@ -184,9 +209,6 @@ class ServerCog(commands.Cog):
         attrs = details
         limits = attrs.get("limits", {}) or {}
         features = attrs.get("feature_limits", {}) or {}
-        sftp = (attrs.get("sftp_details") or {})
-        sftp_host = sftp.get("ip")
-        sftp_port = sftp.get("port")
 
         r = res.get("resources") or {}
         cpu_now = float(r.get("cpu_absolute") or 0.0)
@@ -199,38 +221,87 @@ class ServerCog(commands.Cog):
         suspended = bool(res.get("is_suspended"))
 
         cpu_limit = int(limits.get("cpu") or 0)
-        cpu_limit_s = "Unlimited" if cpu_limit == 0 else f"{cpu_limit}%"
-        def pair(used, limit): return _fmt_gib_mib_pair(used, limit)[0]
-        mem_s = pair(mem_used, limits.get("memory"))
-        disk_s = pair(disk_used, limits.get("disk"))
-        net_s = f"RX {_fmt_bytes(rx)} • TX {_fmt_bytes(tx)}"
+        mem_s, mem_pct = _fmt_gib_mib_pair(mem_used, limits.get("memory"))
+        disk_s, disk_pct = _fmt_gib_mib_pair(disk_used, limits.get("disk"))
         up_s = _fmt_uptime(uptime_ms)
 
         backups_limit = int(features.get("backups") or 0)
-        backups_s = f"{backups_used}/{backups_limit or '∞'}" if backups_limit else f"{backups_used}/∞"
+        backups_s = f"{backups_used}/{backups_limit if backups_limit > 0 else '∞'}"
 
         docker_image = attrs.get("docker_image") or ""
         engine = docker_image.split(":")[-1] if ":" in docker_image else docker_image
 
         uuid_short = (attrs.get("uuid") or uuid)[:8]
-
-        e = discord.Embed(title=f"{attrs.get('name','(unknown)')} — {uuid_short}")
+        server_name = attrs.get("name", "(unknown)")
+        
+        # Create embed with status-based color
+        embed_color = _get_status_color(power, suspended)
+        e = discord.Embed(
+            title=f"📊 {server_name}",
+            description=f"**UUID:** `{uuid_short}...`",
+            color=embed_color,
+            timestamp=discord.utils.utcnow()
+        )
+        
+        # Status section with emoji indicators
+        if power.lower() in ("running", "online"):
+            power_emoji = "🟢"
+        elif power.lower() in ("offline", "stopped"):
+            power_emoji = "🔴"
+        else:
+            power_emoji = "🟡"
+        status_value = f"{power_emoji} **{power.title()}**"
+        if suspended:
+            status_value += " 🚫 **SUSPENDED**"
+        e.add_field(name="⚡ Status", value=status_value, inline=True)
+        
+        # Node and uptime
         node = attrs.get("node")
         maint = attrs.get("is_node_under_maintenance")
         if node:
-            value = f"{node}" + (" (maintenance)" if maint else "")
-            e.add_field(name="Node", value=value, inline=True)
-        e.add_field(name="Power", value=str(power), inline=True)
-        e.add_field(name="Uptime", value=up_s, inline=True)
-        e.add_field(name="Suspended", value="Yes" if suspended else "No", inline=True)
-        e.add_field(name="CPU", value=f"{cpu_now:.1f}% / {cpu_limit_s}", inline=True)
-        e.add_field(name="Memory", value=mem_s, inline=True)
-        e.add_field(name="Disk", value=disk_s, inline=True)
-        e.add_field(name="Network (since boot)", value=net_s, inline=False)
-        e.add_field(name="Backups", value=backups_s, inline=True)
-        e.add_field(name="Engine", value=engine or "—", inline=True)
-        if sftp_host and sftp_port:
-            e.add_field(name="SFTP", value=f"{sftp_host}:{sftp_port}", inline=False)
+            node_value = f"📍 {node}"
+            if maint:
+                node_value += "\n⚠️ Under Maintenance"
+            e.add_field(name="🖥️ Node", value=node_value, inline=True)
+        
+        e.add_field(name="⏱️ Uptime", value=f"`{up_s}`", inline=True)
+        
+        # Resource usage section with progress bars
+        e.add_field(name="\u200b", value="", inline=False)  # Visual separator (zero-width space)
+        
+        # CPU with progress bar
+        cpu_pct = (cpu_now / cpu_limit * 100.0) if cpu_limit > 0 else None
+        # For unlimited CPU, show progress based on current usage (capped at 100%)
+        cpu_bar_pct = cpu_pct if cpu_limit > 0 else min(cpu_now, 100)
+        cpu_bar = _progress_bar(cpu_bar_pct)
+        cpu_limit_s = "Unlimited" if cpu_limit == 0 else f"{cpu_limit}%"
+        cpu_value = f"`{cpu_now:.1f}%` / `{cpu_limit_s}`\n{cpu_bar}"
+        e.add_field(name="💻 CPU Usage", value=cpu_value, inline=True)
+        
+        # Memory with progress bar
+        mem_bar = _progress_bar(mem_pct)
+        mem_value = f"`{mem_s}`\n{mem_bar}"
+        e.add_field(name="🧠 Memory", value=mem_value, inline=True)
+        
+        # Disk with progress bar
+        disk_bar = _progress_bar(disk_pct)
+        disk_value = f"`{disk_s}`\n{disk_bar}"
+        e.add_field(name="💾 Disk", value=disk_value, inline=True)
+        
+        # Network stats
+        e.add_field(name="\u200b", value="", inline=False)  # Visual separator (zero-width space)
+        net_value = f"📥 **RX:** `{_fmt_bytes(rx)}`\n📤 **TX:** `{_fmt_bytes(tx)}`"
+        e.add_field(name="🌐 Network (Since Boot)", value=net_value, inline=True)
+        
+        # Backups
+        e.add_field(name="💼 Backups", value=f"`{backups_s}`", inline=True)
+        
+        # Engine/Docker image
+        if engine:
+            e.add_field(name="🐳 Engine", value=f"`{engine}`", inline=True)
+        
+        # Footer
+        e.set_footer(text=f"Server ID: {attrs.get('uuid') or uuid}")
 
         await inter.followup.send(embed=e, ephemeral=False)
 
