@@ -226,10 +226,7 @@ class ServerCog(commands.Cog):
         up_s = _fmt_uptime(uptime_ms)
 
         backups_limit = int(features.get("backups") or 0)
-        if backups_limit:
-            backups_s = f"{backups_used}/{backups_limit or '∞'}"
-        else:
-            backups_s = f"{backups_used}/∞"
+        backups_s = f"{backups_used}/{backups_limit if backups_limit > 0 else '∞'}"
 
         docker_image = attrs.get("docker_image") or ""
         engine = docker_image.split(":")[-1] if ":" in docker_image else docker_image
@@ -270,11 +267,13 @@ class ServerCog(commands.Cog):
         e.add_field(name="⏱️ Uptime", value=f"`{up_s}`", inline=True)
         
         # Resource usage section with progress bars
-        e.add_field(name="\u200b", value="", inline=False)  # Separator
+        e.add_field(name="\u200b", value="", inline=False)  # Visual separator (zero-width space)
         
         # CPU with progress bar
         cpu_pct = (cpu_now / cpu_limit * 100.0) if cpu_limit > 0 else None
-        cpu_bar = _progress_bar(cpu_pct if cpu_limit > 0 else (cpu_now if cpu_now <= 100 else 100))
+        # For unlimited CPU, show progress based on current usage (capped at 100%)
+        cpu_bar_pct = cpu_pct if cpu_limit > 0 else min(cpu_now, 100)
+        cpu_bar = _progress_bar(cpu_bar_pct)
         cpu_limit_s = "Unlimited" if cpu_limit == 0 else f"{cpu_limit}%"
         cpu_value = f"`{cpu_now:.1f}%` / `{cpu_limit_s}`\n{cpu_bar}"
         e.add_field(name="💻 CPU Usage", value=cpu_value, inline=True)
@@ -290,7 +289,7 @@ class ServerCog(commands.Cog):
         e.add_field(name="💾 Disk", value=disk_value, inline=True)
         
         # Network stats
-        e.add_field(name="\u200b", value="", inline=False)  # Separator
+        e.add_field(name="\u200b", value="", inline=False)  # Visual separator (zero-width space)
         net_value = f"📥 **RX:** `{_fmt_bytes(rx)}`\n📤 **TX:** `{_fmt_bytes(tx)}`"
         e.add_field(name="🌐 Network (Since Boot)", value=net_value, inline=True)
         
