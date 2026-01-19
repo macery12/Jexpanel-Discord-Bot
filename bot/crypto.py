@@ -10,7 +10,7 @@ from .config import settings
 
 
 def _aad(discord_user_id: int, panel_url: str) -> bytes:
-    return f"{discord_user_id}|{panel_url}".encode()
+    return f"{discord_user_id}|{panel_url}".encode("utf-8")
 
 def encrypt_token(discord_user_id: int, panel_url: str, token: str) -> str:
     key = settings.bot_data_key

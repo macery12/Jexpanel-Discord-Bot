@@ -114,15 +114,16 @@ async def get_user_token(s: AsyncSession, user_id: int, panel_url: str, prefer_l
     if prefer_label:
         for r in rows:
             if r.label == str(prefer_label):
-                chosen = r; break
+                chosen = r
+                break
     if not chosen:
         chosen = next((r for r in rows if r.is_default), rows[0])
-    chosen.last_used_at = _to_naive_utc(datetime.utcnow())
+    chosen.last_used_at = _to_naive_utc(datetime.now(UTC))
     await s.commit()
     return decrypt_token(user_id, panel_url, chosen.ciphertext_b64)
 
 async def purge_old_credentials(s: AsyncSession, days: int) -> int:
-    cutoff = datetime.utcnow()
+    cutoff = datetime.now(UTC)
     res = await s.execute(select(UserCredential))
     rows = res.scalars().all()
     to_delete = []
