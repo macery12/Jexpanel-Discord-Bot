@@ -507,9 +507,6 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     Raises:
         ValueError: If URL is invalid or report cannot be fetched
     """
-    from urllib.parse import urlparse
-    import aiohttp
-
     # Validate URL
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
@@ -573,16 +570,25 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     threads = data.get("threads", [])
     all_records = []
 
+    def get_thread_roots(thread: dict) -> list[dict]:
+        """Extract root nodes from thread, handling both rootNodes and rootNode."""
+        # Check rootNodes first (plural, used in full JSON format)
+        if "rootNodes" in thread:
+            nodes = thread["rootNodes"]
+            if nodes is not None:
+                return nodes if isinstance(nodes, list) else [nodes]
+        # Fallback to rootNode (singular, used in basic format)
+        if "rootNode" in thread:
+            node = thread["rootNode"]
+            if node is not None:
+                return [node]
+        return []
+
     for thread in threads:
         # Check server/main thread first
         thread_name = thread.get("name", "").lower()
         if "server" in thread_name or "main" in thread_name:
-            # Forge full JSON may have 'rootNodes' (list) instead of 'rootNode'
-            roots = thread.get("rootNodes") or thread.get("rootNode")
-            if not roots:
-                continue
-            if isinstance(roots, dict):
-                roots = [roots]  # wrap single dict in list
+            roots = get_thread_roots(thread)
             for root in roots:
                 records = _flatten_call_tree(root)
                 all_records.extend(records)
@@ -590,11 +596,7 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     # If still empty, fallback to all threads
     if not all_records:
         for thread in threads:
-            roots = thread.get("rootNodes") or thread.get("rootNode")
-            if not roots:
-                continue
-            if isinstance(roots, dict):
-                roots = [roots]
+            roots = get_thread_roots(thread)
             for root in roots:
                 records = _flatten_call_tree(root)
                 all_records.extend(records)

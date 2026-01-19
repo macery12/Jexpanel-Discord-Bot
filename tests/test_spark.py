@@ -333,10 +333,13 @@ class TestAnalyzeSparkReport:
     async def test_valid_url_parsing(self):
         """Test URL parsing and conversion to raw JSON."""
         test_data = {
+            "type": "sampler",
             "metadata": {
-                "platformName": "Paper",
-                "platformVersion": "1.20.1",
-                "minecraftVersion": "1.20.1",
+                "platform": {
+                    "name": "Paper",
+                    "version": "1.20.1",
+                    "minecraftVersion": "1.20.1",
+                }
             },
             "samplerMetadata": {
                 "type": "sampler",
@@ -428,6 +431,7 @@ class TestAnalyzeSparkReport:
     async def test_wrong_report_type(self):
         """Test handling of non-sampler reports."""
         test_data = {
+            "type": "health",  # Wrong type at top level
             "metadata": {},
             "samplerMetadata": {
                 "type": "health",  # Wrong type
@@ -460,6 +464,59 @@ class TestAnalyzeSparkReport:
         with patch("aiohttp.ClientSession", MockSession):
             with pytest.raises(ValueError, match="Invalid report type"):
                 await analyze_spark_report("https://spark.lucko.me/health123")
+
+    @pytest.mark.asyncio
+    async def test_empty_rootnodes(self):
+        """Test handling of threads with empty rootNodes array."""
+        test_data = {
+            "type": "sampler",
+            "metadata": {
+                "platform": {
+                    "name": "Forge",
+                    "version": "47.4.0",
+                    "minecraftVersion": "1.20.1",
+                }
+            },
+            "samplerMetadata": {
+                "type": "sampler",
+                "startTime": 1768855885781,
+                "endTime": 1768862498094,
+                "samplerMode": "cpu",
+            },
+            "threads": [
+                {
+                    "name": "Server thread",
+                    "rootNodes": []  # Empty array should not crash
+                }
+            ]
+        }
+        
+        async def mock_json():
+            return test_data
+        
+        mock_response = Mock()
+        mock_response.status = 200
+        mock_response.json = mock_json
+        
+        class MockSession:
+            async def __aenter__(self):
+                return self
+            
+            async def __aexit__(self, *args):
+                pass
+            
+            def get(self, *args, **kwargs):
+                class MockContext:
+                    async def __aenter__(ctx_self):
+                        return mock_response
+                    async def __aexit__(ctx_self, *args):
+                        pass
+                return MockContext()
+        
+        with patch("aiohttp.ClientSession", MockSession):
+            # Should raise "No call tree records found" not crash
+            with pytest.raises(ValueError, match="No call tree records found"):
+                await analyze_spark_report("https://spark.lucko.me/empty")
 
 
 class TestDiscordFormatting:
