@@ -31,7 +31,7 @@ class Bot(commands.Bot):
         if settings.app_api_key:
             self.app_client = PteroApp(self.http_session)
 
-        await self.load_extension("bot.cogs.keys")
+        await self.load_extension("bot.cogs.credentials")
         await self.load_extension("bot.cogs.server")
         await self.load_extension("bot.cogs.admin")
         await self.load_extension("bot.cogs.app_admin")

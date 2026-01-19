@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..client.ptero_rest import PteroClient
-from ..core.permissions import has_admin_role
+from ..utils.permissions import has_admin_role
 from ..db import SessionLocal
 from ..services.credentials import (
     add_or_update_credential,
@@ -30,7 +30,7 @@ async def validate_token(panel_url: str, token: str) -> bool:
         return False
 
 
-class KeysCog(commands.Cog):
+class CredentialsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -134,4 +134,4 @@ class KeysCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(KeysCog(bot))
+    await bot.add_cog(CredentialsCog(bot))

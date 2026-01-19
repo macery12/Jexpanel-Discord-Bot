@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..client.ptero_app import PteroApp
-from ..core.permissions import has_admin_role
+from ..utils.permissions import has_admin_role
 
 
 class AppAdminCog(commands.Cog):

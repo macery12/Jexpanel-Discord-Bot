@@ -5,145 +5,24 @@ import io
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import select
 
 from ..client.ptero_rest import PteroClient
 from ..client.ptero_ws import fetch_recent_logs, send_console_command
-from ..core.permissions import SERVER_UUID_RE, has_admin_role
+from ..utils.permissions import has_admin_role
+from ..utils.formatting import (
+    format_bytes,
+    format_memory_usage,
+    format_progress_bar,
+    format_uptime,
+    get_status_color,
+)
+from ..utils.server_helpers import (
+    get_user_token_for_panel,
+    list_user_panels,
+    resolve_identifier_and_panel,
+)
 from ..db import SessionLocal
-from ..db.models import ServerAlias, UserCredential
-
-
-def _fmt_bytes(n: int | None) -> str:
-    if not n:
-        return "0 B"
-    units = ["B", "KiB", "MiB", "GiB", "TiB"]
-    i = 0
-    f = float(n)
-    while f >= 1024.0 and i < len(units) - 1:
-        f /= 1024.0
-        i += 1
-    if i >= 2:
-        return f"{f:.2f} {units[i]}"
-    return f"{f:.1f} {units[i]}"
-
-
-def _fmt_gib_mib_pair(used_bytes: int, limit_mib: int | None) -> tuple[str, float | None]:
-    used_s = _fmt_bytes(int(used_bytes or 0))
-    if not limit_mib or limit_mib <= 0:
-        return f"{used_s} / ∞", None
-    limit_bytes = int(limit_mib) * 1024 * 1024
-    lim_s = _fmt_bytes(limit_bytes)
-    pct = (used_bytes / limit_bytes * 100.0) if limit_bytes > 0 else None
-    return f"{used_s} / {lim_s} ({pct:.0f}%)", pct
-
-
-def _progress_bar(percentage: float | None, length: int = 10) -> str:
-    """Create a visual progress bar using Unicode block characters."""
-    if percentage is None:
-        return "▱" * length
-    pct = max(0.0, min(100.0, percentage))
-    filled = int((pct / 100.0) * length)
-    empty = length - filled
-    return "▰" * filled + "▱" * empty
-
-
-def _get_status_color(power: str, suspended: bool) -> int:
-    """Return embed color based on server status."""
-    if suspended:
-        return 0x95A5A6  # Gray for suspended
-    power_lower = power.lower()
-    if power_lower in ("running", "online"):
-        return 0x2ECC71  # Green for running
-    elif power_lower in ("starting", "stopping"):
-        return 0xF39C12  # Orange for transitioning
-    elif power_lower in ("offline", "stopped"):
-        return 0xE74C3C  # Red for offline
-    else:
-        return 0x3498DB  # Blue for unknown
-
-
-def _fmt_uptime(ms: int | None) -> str:
-    if not ms or ms <= 0:
-        return "—"
-    s = int(ms // 1000)
-    d, s = divmod(s, 86400)
-    h, s = divmod(s, 3600)
-    m, s = divmod(s, 60)
-    parts = []
-    if d: parts.append(f"{d}d")
-    if h: parts.append(f"{h}h")
-    if m: parts.append(f"{m}m")
-    if not parts: parts.append(f"{s}s")
-    return " ".join(parts)
-
-
-async def list_user_panels(user_id: int):
-    async with SessionLocal() as s:
-        res = await s.execute(select(UserCredential.panel_url).where(UserCredential.discord_user_id == user_id))
-        urls = sorted(set([row[0] for row in res.all()]))
-        return urls
-
-
-async def get_user_token_for_panel(user_id: int, panel_url: str) -> str | None:
-    async with SessionLocal() as s:
-        from ..services.credentials import get_user_token
-        return await get_user_token(s, user_id, panel_url)
-
-
-async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | None, str | None]:
-    val = value.strip()
-    if SERVER_UUID_RE.match(val):
-        panels = await list_user_panels(user_id)
-        if not panels:
-            return (val, None)
-        if len(panels) == 1:
-            return (val, panels[0])
-        import aiohttp
-        for p in panels:
-            tok = await get_user_token_for_panel(user_id, p)
-            if not tok: continue
-            async with aiohttp.ClientSession() as sess:
-                cli = PteroClient(sess, p, tok)
-                try:
-                    await cli.server_details(val)
-                    return (val, p)
-                except Exception:
-                    continue
-        return (val, None)
-
-    async with SessionLocal() as s:
-        res = await s.execute(select(ServerAlias).where(ServerAlias.alias == val))
-        alias = res.scalar_one_or_none()
-        if alias:
-            if alias.panel_url:
-                return (alias.uuid, alias.panel_url)
-            uuid_guess = alias.uuid
-        else:
-            uuid_guess = None
-
-    panels = await list_user_panels(user_id)
-    if not panels:
-        return (None, None)
-    import aiohttp
-    for p in panels:
-        tok = await get_user_token_for_panel(user_id, p)
-        if not tok: continue
-        async with aiohttp.ClientSession() as sess:
-            cli = PteroClient(sess, p, tok)
-            try:
-                servers = await cli.list_servers()
-                needle = val.lower()
-                for srv in servers:
-                    if uuid_guess and srv.get("uuid") == uuid_guess:
-                        return (srv["uuid"], p)
-                    uuid = srv.get("uuid","")
-                    name = srv.get("name","")
-                    if uuid.startswith(val) or needle in name.lower():
-                        return (uuid, p)
-            except Exception:
-                continue
-    return (None, None)
+from ..db.models import ServerAlias
 
 
 class ServerCog(commands.Cog):
@@ -221,9 +100,9 @@ class ServerCog(commands.Cog):
         suspended = bool(res.get("is_suspended"))
 
         cpu_limit = int(limits.get("cpu") or 0)
-        mem_s, mem_pct = _fmt_gib_mib_pair(mem_used, limits.get("memory"))
-        disk_s, disk_pct = _fmt_gib_mib_pair(disk_used, limits.get("disk"))
-        up_s = _fmt_uptime(uptime_ms)
+        mem_s, mem_pct = format_memory_usage(mem_used, limits.get("memory"))
+        disk_s, disk_pct = format_memory_usage(disk_used, limits.get("disk"))
+        up_s = format_uptime(uptime_ms)
 
         backups_limit = int(features.get("backups") or 0)
         backups_s = f"{backups_used}/{backups_limit if backups_limit > 0 else '∞'}"
@@ -235,7 +114,7 @@ class ServerCog(commands.Cog):
         server_name = attrs.get("name", "(unknown)")
         
         # Create embed with status-based color
-        embed_color = _get_status_color(power, suspended)
+        embed_color = get_status_color(power, suspended)
         e = discord.Embed(
             title=f"📊 {server_name}",
             description=f"**UUID:** `{uuid_short}...`",
@@ -273,24 +152,24 @@ class ServerCog(commands.Cog):
         cpu_pct = (cpu_now / cpu_limit * 100.0) if cpu_limit > 0 else None
         # For unlimited CPU, show progress based on current usage (capped at 100%)
         cpu_bar_pct = cpu_pct if cpu_limit > 0 else min(cpu_now, 100)
-        cpu_bar = _progress_bar(cpu_bar_pct)
+        cpu_bar = format_progress_bar(cpu_bar_pct)
         cpu_limit_s = "Unlimited" if cpu_limit == 0 else f"{cpu_limit}%"
         cpu_value = f"`{cpu_now:.1f}%` / `{cpu_limit_s}`\n{cpu_bar}"
         e.add_field(name="💻 CPU Usage", value=cpu_value, inline=True)
         
         # Memory with progress bar
-        mem_bar = _progress_bar(mem_pct)
+        mem_bar = format_progress_bar(mem_pct)
         mem_value = f"`{mem_s}`\n{mem_bar}"
         e.add_field(name="🧠 Memory", value=mem_value, inline=True)
         
         # Disk with progress bar
-        disk_bar = _progress_bar(disk_pct)
+        disk_bar = format_progress_bar(disk_pct)
         disk_value = f"`{disk_s}`\n{disk_bar}"
         e.add_field(name="💾 Disk", value=disk_value, inline=True)
         
         # Network stats
         e.add_field(name="\u200b", value="", inline=False)  # Visual separator (zero-width space)
-        net_value = f"📥 **RX:** `{_fmt_bytes(rx)}`\n📤 **TX:** `{_fmt_bytes(tx)}`"
+        net_value = f"📥 **RX:** `{format_bytes(rx)}`\n📤 **TX:** `{format_bytes(tx)}`"
         e.add_field(name="🌐 Network (Since Boot)", value=net_value, inline=True)
         
         # Backups

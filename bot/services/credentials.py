@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..crypto import decrypt_token, encrypt_token, fingerprint
+from ..utils.crypto import decrypt_token, encrypt_token, fingerprint
 from ..db.models import UserCredential
 
 TZUTC = UTC

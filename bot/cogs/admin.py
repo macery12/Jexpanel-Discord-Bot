@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
 
-from ..core.permissions import SERVER_UUID_RE, has_admin_role
+from ..utils.permissions import SERVER_UUID_RE, has_admin_role
 from ..db import SessionLocal
 from ..db.models import ServerAlias
 
