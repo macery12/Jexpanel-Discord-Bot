@@ -5,6 +5,7 @@ import io
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ui import Button, View
 from sqlalchemy import select
 
 from ..client.ptero_rest import PteroClient
@@ -12,6 +13,9 @@ from ..client.ptero_ws import fetch_recent_logs, send_console_command
 from ..core.permissions import SERVER_UUID_RE, has_admin_role
 from ..db import SessionLocal
 from ..db.models import ServerAlias, UserCredential
+
+# Constants
+DISCORD_MESSAGE_LIMIT = 1900  # Max length for Discord message content before using file attachment
 
 
 def _fmt_bytes(n: int | None) -> str:
@@ -71,16 +75,22 @@ def _fmt_uptime(ms: int | None) -> str:
     h, s = divmod(s, 3600)
     m, s = divmod(s, 60)
     parts = []
-    if d: parts.append(f"{d}d")
-    if h: parts.append(f"{h}h")
-    if m: parts.append(f"{m}m")
-    if not parts: parts.append(f"{s}s")
+    if d:
+        parts.append(f"{d}d")
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if not parts:
+        parts.append(f"{s}s")
     return " ".join(parts)
 
 
 async def list_user_panels(user_id: int):
     async with SessionLocal() as s:
-        res = await s.execute(select(UserCredential.panel_url).where(UserCredential.discord_user_id == user_id))
+        res = await s.execute(
+            select(UserCredential.panel_url).where(UserCredential.discord_user_id == user_id)
+        )
         urls = sorted(set([row[0] for row in res.all()]))
         return urls
 
@@ -88,6 +98,7 @@ async def list_user_panels(user_id: int):
 async def get_user_token_for_panel(user_id: int, panel_url: str) -> str | None:
     async with SessionLocal() as s:
         from ..services.credentials import get_user_token
+
         return await get_user_token(s, user_id, panel_url)
 
 
@@ -100,9 +111,11 @@ async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | 
         if len(panels) == 1:
             return (val, panels[0])
         import aiohttp
+
         for p in panels:
             tok = await get_user_token_for_panel(user_id, p)
-            if not tok: continue
+            if not tok:
+                continue
             async with aiohttp.ClientSession() as sess:
                 cli = PteroClient(sess, p, tok)
                 try:
@@ -126,9 +139,11 @@ async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | 
     if not panels:
         return (None, None)
     import aiohttp
+
     for p in panels:
         tok = await get_user_token_for_panel(user_id, p)
-        if not tok: continue
+        if not tok:
+            continue
         async with aiohttp.ClientSession() as sess:
             cli = PteroClient(sess, p, tok)
             try:
@@ -137,8 +152,8 @@ async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | 
                 for srv in servers:
                     if uuid_guess and srv.get("uuid") == uuid_guess:
                         return (srv["uuid"], p)
-                    uuid = srv.get("uuid","")
-                    name = srv.get("name","")
+                    uuid = srv.get("uuid", "")
+                    name = srv.get("name", "")
                     if uuid.startswith(val) or needle in name.lower():
                         return (uuid, p)
             except Exception:
@@ -146,15 +161,265 @@ async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | 
     return (None, None)
 
 
+async def build_status_embed(user_id: int, uuid: str, panel: str) -> discord.Embed:
+    """Build the status embed for a server. Extracted for reusability."""
+    tok = await get_user_token_for_panel(user_id, panel)
+    if not tok:
+        raise ValueError("No key for that panel.")
+
+    import aiohttp
+
+    async with aiohttp.ClientSession() as sess:
+        cli = PteroClient(sess, panel, tok)
+        details = await cli.server_details(uuid)
+        res = await cli.server_resources(uuid)
+        try:
+            backups = await cli.list_backups(uuid)
+            backups_used = len(backups)
+        except Exception:
+            backups_used = 0
+
+    attrs = details
+    limits = attrs.get("limits", {}) or {}
+    features = attrs.get("feature_limits", {}) or {}
+
+    r = res.get("resources") or {}
+    cpu_now = float(r.get("cpu_absolute") or 0.0)
+    mem_used = int(r.get("memory_bytes") or 0)
+    disk_used = int(r.get("disk_bytes") or 0)
+    rx = int(r.get("network_rx_bytes") or r.get("rx_bytes") or 0)
+    tx = int(r.get("network_tx_bytes") or r.get("tx_bytes") or 0)
+    uptime_ms = int(r.get("uptime") or res.get("uptime") or 0)
+    power = res.get("current_state") or res.get("state") or "unknown"
+    suspended = bool(res.get("is_suspended"))
+
+    cpu_limit = int(limits.get("cpu") or 0)
+    mem_s, mem_pct = _fmt_gib_mib_pair(mem_used, limits.get("memory"))
+    disk_s, disk_pct = _fmt_gib_mib_pair(disk_used, limits.get("disk"))
+    up_s = _fmt_uptime(uptime_ms)
+
+    backups_limit = int(features.get("backups") or 0)
+    backups_s = f"{backups_used}/{backups_limit if backups_limit > 0 else '∞'}"
+
+    docker_image = attrs.get("docker_image") or ""
+    engine = docker_image.split(":")[-1] if ":" in docker_image else docker_image
+
+    uuid_short = (attrs.get("uuid") or uuid)[:8]
+    server_name = attrs.get("name", "(unknown)")
+
+    # Create embed with status-based color
+    embed_color = _get_status_color(power, suspended)
+    e = discord.Embed(
+        title=f"📊 {server_name}",
+        description=f"**UUID:** `{uuid_short}...`",
+        color=embed_color,
+        timestamp=discord.utils.utcnow(),
+    )
+
+    # Status section with emoji indicators
+    if power.lower() in ("running", "online"):
+        power_emoji = "🟢"
+    elif power.lower() in ("offline", "stopped"):
+        power_emoji = "🔴"
+    else:
+        power_emoji = "🟡"
+    status_value = f"{power_emoji} **{power.title()}**"
+    if suspended:
+        status_value += " 🚫 **SUSPENDED**"
+    e.add_field(name="⚡ Status", value=status_value, inline=True)
+
+    # Node and uptime
+    node = attrs.get("node")
+    maint = attrs.get("is_node_under_maintenance")
+    if node:
+        node_value = f"📍 {node}"
+        if maint:
+            node_value += "\n⚠️ Under Maintenance"
+        e.add_field(name="🖥️ Node", value=node_value, inline=True)
+
+    e.add_field(name="⏱️ Uptime", value=f"`{up_s}`", inline=True)
+
+    # Resource usage section with progress bars
+    e.add_field(name="\u200b", value="", inline=False)  # Visual separator
+
+    # CPU with progress bar
+    cpu_pct = (cpu_now / cpu_limit * 100.0) if cpu_limit > 0 else None
+    cpu_bar_pct = cpu_pct if cpu_limit > 0 else min(cpu_now, 100)
+    cpu_bar = _progress_bar(cpu_bar_pct)
+    cpu_limit_s = "Unlimited" if cpu_limit == 0 else f"{cpu_limit}%"
+    cpu_value = f"`{cpu_now:.1f}%` / `{cpu_limit_s}`\n{cpu_bar}"
+    e.add_field(name="💻 CPU Usage", value=cpu_value, inline=True)
+
+    # Memory with progress bar
+    mem_bar = _progress_bar(mem_pct)
+    mem_value = f"`{mem_s}`\n{mem_bar}"
+    e.add_field(name="🧠 Memory", value=mem_value, inline=True)
+
+    # Disk with progress bar
+    disk_bar = _progress_bar(disk_pct)
+    disk_value = f"`{disk_s}`\n{disk_bar}"
+    e.add_field(name="💾 Disk", value=disk_value, inline=True)
+
+    # Network stats
+    e.add_field(name="\u200b", value="", inline=False)  # Visual separator
+    net_value = f"📥 **RX:** `{_fmt_bytes(rx)}`\n📤 **TX:** `{_fmt_bytes(tx)}`"
+    e.add_field(name="🌐 Network (Since Boot)", value=net_value, inline=True)
+
+    # Backups
+    e.add_field(name="💼 Backups", value=f"`{backups_s}`", inline=True)
+
+    # Engine/Docker image
+    if engine:
+        e.add_field(name="🐳 Engine", value=f"`{engine}`", inline=True)
+
+    # Footer
+    e.set_footer(text=f"Server ID: {attrs.get('uuid') or uuid}")
+
+    return e
+
+
+async def fetch_logs_text(user_id: int, uuid: str, panel: str, lines: int = 50) -> str:
+    """Fetch server logs. Extracted for reusability."""
+    tok = await get_user_token_for_panel(user_id, panel)
+    if not tok:
+        raise ValueError("No key for that panel.")
+
+    lines = max(1, min(lines, 200))
+    import aiohttp
+
+    async with aiohttp.ClientSession() as sess:
+        cli = PteroClient(sess, panel, tok)
+        info = await cli.websocket_info(uuid)
+        token = info["data"]["token"]
+        socket = info["data"]["socket"]
+
+    logs = await fetch_recent_logs(
+        socket, panel, token, max_lines=lines, total_timeout=2.5, idle_timeout=0.4
+    )
+
+    if not logs:
+        return ""
+    return "\n".join(logs)
+
+
+class ServerActionView(View):
+    """Interactive button view for server actions."""
+
+    def __init__(self, user_id: int, uuid: str, panel: str, server_name: str):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.user_id = user_id
+        self.uuid = uuid
+        self.panel = panel
+        self.server_name = server_name
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Only the original user can use the buttons."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This menu is not for you. Use `/server` to create your own.", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Status", style=discord.ButtonStyle.primary, emoji="📊")
+    async def status_button(self, interaction: discord.Interaction, button: Button):
+        """Show server status in chat."""
+        await interaction.response.defer(ephemeral=False)
+        try:
+            embed = await build_status_embed(self.user_id, self.uuid, self.panel)
+            await interaction.followup.send(embed=embed, ephemeral=False)
+        except Exception as e:
+            await interaction.followup.send(f"Error fetching status: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Logs", style=discord.ButtonStyle.secondary, emoji="📜")
+    async def logs_button(self, interaction: discord.Interaction, button: Button):
+        """Show server logs in chat."""
+        await interaction.response.defer(ephemeral=False)
+        try:
+            logs = await fetch_logs_text(self.user_id, self.uuid, self.panel, lines=50)
+            if not logs:
+                await interaction.followup.send("No logs available.", ephemeral=False)
+                return
+
+            if len(logs) > DISCORD_MESSAGE_LIMIT:
+                file = discord.File(io.BytesIO(logs.encode("utf-8")), filename="logs.txt")
+                await interaction.followup.send(
+                    f"📜 **Logs for {self.server_name}**", file=file, ephemeral=False
+                )
+            else:
+                await interaction.followup.send(
+                    f"📜 **Logs for {self.server_name}**\n```{logs}```", ephemeral=False
+                )
+        except Exception as e:
+            await interaction.followup.send(f"Error fetching logs: {e}", ephemeral=True)
+
+
 class ServerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="list", description="List your Pterodactyl servers.")
-    @app_commands.describe(filter="Filter by name or UUID prefix", panel_url="Filter by a specific panel URL (optional)")
+    @app_commands.command(
+        name="server", description="Interactive server menu - choose status, logs, and more."
+    )
+    @app_commands.describe(server="Server UUID, name, or alias")
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def server_list(self, inter: discord.Interaction, filter: str | None = None, panel_url: str | None = None):
+    async def server_menu(self, inter: discord.Interaction, server: str):
+        """New interactive server menu with buttons."""
+        await inter.response.defer(ephemeral=True)
+
+        uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
+        if not uuid or not panel:
+            await inter.followup.send(
+                "Server not found for your linked panels. Try `/link` or specify the correct alias.",
+                ephemeral=True,
+            )
+            return
+
+        # Get server name for display
+        tok = await get_user_token_for_panel(inter.user.id, panel)
+        if not tok:
+            await inter.followup.send("No key for that panel. Use `/link`.", ephemeral=True)
+            return
+
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession() as sess:
+                cli = PteroClient(sess, panel, tok)
+                details = await cli.server_details(uuid)
+                server_name = details.get("name", "(unknown)")
+        except Exception as e:
+            await inter.followup.send(f"Error fetching server details: {e}", ephemeral=True)
+            return
+
+        # Create the interactive menu
+        view = ServerActionView(inter.user.id, uuid, panel, server_name)
+
+        embed = discord.Embed(
+            title=f"🎮 Server Actions: {server_name}",
+            description=f"**UUID:** `{uuid[:8]}...`\n\nSelect an action below:",
+            color=0x5865F2,  # Discord blurple
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(
+            name="📊 Status", value="View live server status and resource usage", inline=False
+        )
+        embed.add_field(name="📜 Logs", value="View recent console logs", inline=False)
+        embed.set_footer(text="This menu will expire in 5 minutes")
+
+        await inter.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @app_commands.command(name="list", description="List your Pterodactyl servers.")
+    @app_commands.describe(
+        filter="Filter by name or UUID prefix",
+        panel_url="Filter by a specific panel URL (optional)",
+    )
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def server_list(
+        self, inter: discord.Interaction, filter: str | None = None, panel_url: str | None = None
+    ):
         await inter.response.defer(ephemeral=True)
         panels = [panel_url] if panel_url else await list_user_panels(inter.user.id)
         if not panels:
@@ -162,9 +427,10 @@ class ServerCog(commands.Cog):
             return
         lines = []
         import aiohttp
+
         for p in panels:
             tok = await get_user_token_for_panel(inter.user.id, p)
-            if not tok: 
+            if not tok:
                 continue
             async with aiohttp.ClientSession() as sess:
                 cli = PteroClient(sess, p, tok)
@@ -174,14 +440,23 @@ class ServerCog(commands.Cog):
                     continue
                 if filter:
                     f = filter.lower().strip()
-                    servers = [s for s in servers if f in s.get("name","").lower() or s.get("uuid","").startswith(filter)]
+                    servers = [
+                        s
+                        for s in servers
+                        if f in s.get("name", "").lower() or s.get("uuid", "").startswith(filter)
+                    ]
                 for s in servers[:25]:
-                    lines.append(f"• **{s.get('name','(unknown)')}** — `{s.get('uuid','?')}` — _{p}_")
+                    lines.append(
+                        f"• **{s.get('name','(unknown)')}** — `{s.get('uuid','?')}` — _{p}_"
+                    )
         if not lines:
-            await inter.followup.send("No servers found.", ephemeral=True); return
+            await inter.followup.send("No servers found.", ephemeral=True)
+            return
         await inter.followup.send("\n".join(lines[:25]), ephemeral=True)
 
-    @app_commands.command(name="status", description="Show power + live stats for a server (using your key).")
+    @app_commands.command(
+        name="status", description="Show power + live stats for a server (using your key)."
+    )
     @app_commands.describe(server="Alias, partial, or full UUID.")
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -189,123 +464,23 @@ class ServerCog(commands.Cog):
         await inter.response.defer(ephemeral=False)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
         if not uuid or not panel:
-            await inter.followup.send("Server not found for your linked panels. Try `/link` or specify the correct alias.", ephemeral=True)
+            await inter.followup.send(
+                "Server not found for your linked panels. Try `/link` or specify the correct alias.",
+                ephemeral=True,
+            )
             return
-        tok = await get_user_token_for_panel(inter.user.id, panel)
-        if not tok:
-            await inter.followup.send("No key for that panel. Use `/link`.", ephemeral=True); return
 
-        import aiohttp
-        async with aiohttp.ClientSession() as sess:
-            cli = PteroClient(sess, panel, tok)
-            details = await cli.server_details(uuid)
-            res = await cli.server_resources(uuid)
-            try:
-                backups = await cli.list_backups(uuid)
-                backups_used = len(backups)
-            except Exception:
-                backups_used = 0
+        try:
+            embed = await build_status_embed(inter.user.id, uuid, panel)
+            await inter.followup.send(embed=embed, ephemeral=False)
+        except ValueError as e:
+            await inter.followup.send(str(e), ephemeral=True)
+        except Exception as e:
+            await inter.followup.send(f"Error: {e}", ephemeral=True)
 
-        attrs = details
-        limits = attrs.get("limits", {}) or {}
-        features = attrs.get("feature_limits", {}) or {}
-
-        r = res.get("resources") or {}
-        cpu_now = float(r.get("cpu_absolute") or 0.0)
-        mem_used = int(r.get("memory_bytes") or 0)
-        disk_used = int(r.get("disk_bytes") or 0)
-        rx = int(r.get("network_rx_bytes") or r.get("rx_bytes") or 0)
-        tx = int(r.get("network_tx_bytes") or r.get("tx_bytes") or 0)
-        uptime_ms = int(r.get("uptime") or res.get("uptime") or 0)
-        power = res.get("current_state") or res.get("state") or "unknown"
-        suspended = bool(res.get("is_suspended"))
-
-        cpu_limit = int(limits.get("cpu") or 0)
-        mem_s, mem_pct = _fmt_gib_mib_pair(mem_used, limits.get("memory"))
-        disk_s, disk_pct = _fmt_gib_mib_pair(disk_used, limits.get("disk"))
-        up_s = _fmt_uptime(uptime_ms)
-
-        backups_limit = int(features.get("backups") or 0)
-        backups_s = f"{backups_used}/{backups_limit if backups_limit > 0 else '∞'}"
-
-        docker_image = attrs.get("docker_image") or ""
-        engine = docker_image.split(":")[-1] if ":" in docker_image else docker_image
-
-        uuid_short = (attrs.get("uuid") or uuid)[:8]
-        server_name = attrs.get("name", "(unknown)")
-        
-        # Create embed with status-based color
-        embed_color = _get_status_color(power, suspended)
-        e = discord.Embed(
-            title=f"📊 {server_name}",
-            description=f"**UUID:** `{uuid_short}...`",
-            color=embed_color,
-            timestamp=discord.utils.utcnow()
-        )
-        
-        # Status section with emoji indicators
-        if power.lower() in ("running", "online"):
-            power_emoji = "🟢"
-        elif power.lower() in ("offline", "stopped"):
-            power_emoji = "🔴"
-        else:
-            power_emoji = "🟡"
-        status_value = f"{power_emoji} **{power.title()}**"
-        if suspended:
-            status_value += " 🚫 **SUSPENDED**"
-        e.add_field(name="⚡ Status", value=status_value, inline=True)
-        
-        # Node and uptime
-        node = attrs.get("node")
-        maint = attrs.get("is_node_under_maintenance")
-        if node:
-            node_value = f"📍 {node}"
-            if maint:
-                node_value += "\n⚠️ Under Maintenance"
-            e.add_field(name="🖥️ Node", value=node_value, inline=True)
-        
-        e.add_field(name="⏱️ Uptime", value=f"`{up_s}`", inline=True)
-        
-        # Resource usage section with progress bars
-        e.add_field(name="\u200b", value="", inline=False)  # Visual separator (zero-width space)
-        
-        # CPU with progress bar
-        cpu_pct = (cpu_now / cpu_limit * 100.0) if cpu_limit > 0 else None
-        # For unlimited CPU, show progress based on current usage (capped at 100%)
-        cpu_bar_pct = cpu_pct if cpu_limit > 0 else min(cpu_now, 100)
-        cpu_bar = _progress_bar(cpu_bar_pct)
-        cpu_limit_s = "Unlimited" if cpu_limit == 0 else f"{cpu_limit}%"
-        cpu_value = f"`{cpu_now:.1f}%` / `{cpu_limit_s}`\n{cpu_bar}"
-        e.add_field(name="💻 CPU Usage", value=cpu_value, inline=True)
-        
-        # Memory with progress bar
-        mem_bar = _progress_bar(mem_pct)
-        mem_value = f"`{mem_s}`\n{mem_bar}"
-        e.add_field(name="🧠 Memory", value=mem_value, inline=True)
-        
-        # Disk with progress bar
-        disk_bar = _progress_bar(disk_pct)
-        disk_value = f"`{disk_s}`\n{disk_bar}"
-        e.add_field(name="💾 Disk", value=disk_value, inline=True)
-        
-        # Network stats
-        e.add_field(name="\u200b", value="", inline=False)  # Visual separator (zero-width space)
-        net_value = f"📥 **RX:** `{_fmt_bytes(rx)}`\n📤 **TX:** `{_fmt_bytes(tx)}`"
-        e.add_field(name="🌐 Network (Since Boot)", value=net_value, inline=True)
-        
-        # Backups
-        e.add_field(name="💼 Backups", value=f"`{backups_s}`", inline=True)
-        
-        # Engine/Docker image
-        if engine:
-            e.add_field(name="🐳 Engine", value=f"`{engine}`", inline=True)
-        
-        # Footer
-        e.set_footer(text=f"Server ID: {attrs.get('uuid') or uuid}")
-
-        await inter.followup.send(embed=e, ephemeral=False)
-
-    @app_commands.command(name="logs", description="Tail recent console logs (fast, recent only; your key).")
+    @app_commands.command(
+        name="logs", description="Tail recent console logs (fast, recent only; your key)."
+    )
     @app_commands.describe(server="Alias/UUID", lines="How many lines (default 50, max 200)")
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -313,50 +488,56 @@ class ServerCog(commands.Cog):
         await inter.response.defer(ephemeral=True)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
         if not uuid or not panel:
-            await inter.followup.send("Server not found for your linked panels.", ephemeral=True); return
-        tok = await get_user_token_for_panel(inter.user.id, panel)
-        if not tok:
-            await inter.followup.send("No key for that panel.", ephemeral=True); return
+            await inter.followup.send("Server not found for your linked panels.", ephemeral=True)
+            return
 
-        lines = max(1, min(lines, 200))
-        import aiohttp
-        async with aiohttp.ClientSession() as sess:
-            cli = PteroClient(sess, panel, tok)
-            info = await cli.websocket_info(uuid)
-            token = info["data"]["token"]; socket = info["data"]["socket"]
         try:
-            logs = await fetch_recent_logs(socket, panel, token, max_lines=lines, total_timeout=2.5, idle_timeout=0.4)
+            logs = await fetch_logs_text(inter.user.id, uuid, panel, lines)
+            if not logs:
+                await inter.followup.send("No logs available.", ephemeral=True)
+                return
+
+            if len(logs) > DISCORD_MESSAGE_LIMIT:
+                await inter.followup.send(
+                    file=discord.File(io.BytesIO(logs.encode("utf-8")), filename="logs_tail.txt"),
+                    ephemeral=True,
+                )
+            else:
+                await inter.followup.send(f"```{logs}```", ephemeral=True)
+        except ValueError as e:
+            await inter.followup.send(str(e), ephemeral=True)
         except Exception as e:
-            await inter.followup.send(f"WS error: {e}", ephemeral=True); return
+            await inter.followup.send(f"WS error: {e}", ephemeral=True)
 
-        if not logs:
-            await inter.followup.send("No logs available.", ephemeral=True); return
-        text = "\n".join(logs)
-        if len(text) > 1900:
-            await inter.followup.send(file=discord.File(io.BytesIO(text.encode("utf-8")), filename="logs_tail.txt"), ephemeral=True)
-        else:
-            await inter.followup.send(f"```{text}```", ephemeral=True)
-
-    @app_commands.command(name="console", description="Send a console command (admin-only; your key).")
+    @app_commands.command(
+        name="console", description="Send a console command (admin-only; your key)."
+    )
     @app_commands.describe(server="Alias/UUID", command="Command to run")
     async def server_console(self, inter: discord.Interaction, server: str, command: str):
         if not has_admin_role(inter):
-            await inter.response.send_message("You don't have permission.", ephemeral=True); return
+            await inter.response.send_message("You don't have permission.", ephemeral=True)
+            return
         await inter.response.defer(ephemeral=True)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
         if not uuid or not panel:
-            await inter.followup.send("Server not found for your linked panels.", ephemeral=True); return
+            await inter.followup.send("Server not found for your linked panels.", ephemeral=True)
+            return
         tok = await get_user_token_for_panel(inter.user.id, panel)
         if not tok:
-            await inter.followup.send("No key for that panel.", ephemeral=True); return
+            await inter.followup.send("No key for that panel.", ephemeral=True)
+            return
         import aiohttp
+
         async with aiohttp.ClientSession() as sess:
             cli = PteroClient(sess, panel, tok)
             info = await cli.websocket_info(uuid)
             try:
-                await send_console_command(info["data"]["socket"], panel, info["data"]["token"], command)
+                await send_console_command(
+                    info["data"]["socket"], panel, info["data"]["token"], command
+                )
             except Exception as e:
-                await inter.followup.send(f"WS error: {e}", ephemeral=True); return
+                await inter.followup.send(f"WS error: {e}", ephemeral=True)
+                return
         await inter.followup.send("Command sent.", ephemeral=True)
 
     @app_commands.command(name="backups", description="List server backups (your key).")
@@ -367,22 +548,28 @@ class ServerCog(commands.Cog):
         await inter.response.defer(ephemeral=True)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
         if not uuid or not panel:
-            await inter.followup.send("Server not found for your linked panels.", ephemeral=True); return
+            await inter.followup.send("Server not found for your linked panels.", ephemeral=True)
+            return
         tok = await get_user_token_for_panel(inter.user.id, panel)
         if not tok:
-            await inter.followup.send("No key for that panel.", ephemeral=True); return
+            await inter.followup.send("No key for that panel.", ephemeral=True)
+            return
         import aiohttp
+
         async with aiohttp.ClientSession() as sess:
             cli = PteroClient(sess, panel, tok)
             backups = await cli.list_backups(uuid)
         if not backups:
-            await inter.followup.send("No backups found.", ephemeral=True); return
+            await inter.followup.send("No backups found.", ephemeral=True)
+            return
         lines = []
         for b in backups[:10]:
             size = b.get("bytes") or b.get("size") or 0
             size_mb = f"{(size or 0)/1024/1024:.1f} MiB"
             created = b.get("created_at") or b.get("createdAt") or "unknown"
-            lines.append(f"• `{b.get('uuid','')[:8]}…` {b.get('name') or ''} — {size_mb} — {created}")
+            lines.append(
+                f"• `{b.get('uuid','')[:8]}…` {b.get('name') or ''} — {size_mb} — {created}"
+            )
         await inter.followup.send("\n".join(lines), ephemeral=True)
 
 
