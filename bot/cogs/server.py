@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import io
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
 
-from ..db import SessionLocal
-from ..db.models import ServerAlias, UserCredential
-from ..core.permissions import SERVER_UUID_RE, has_admin_role
 from ..client.ptero_rest import PteroClient
 from ..client.ptero_ws import fetch_recent_logs, send_console_command
+from ..core.permissions import SERVER_UUID_RE, has_admin_role
+from ..db import SessionLocal
+from ..db.models import ServerAlias, UserCredential
 
 
 def _fmt_bytes(n: int | None) -> str:
@@ -156,7 +157,7 @@ class ServerCog(commands.Cog):
     @app_commands.command(name="status", description="Show power + live stats for a server (using your key).")
     @app_commands.describe(server="Alias, partial, or full UUID.")
     async def server_status(self, inter: discord.Interaction, server: str):
-        await inter.response.defer(ephemeral=True)
+        await inter.response.defer(ephemeral=False)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
         if not uuid or not panel:
             await inter.followup.send("Server not found for your linked panels. Try `/link` or specify the correct alias.", ephemeral=True)
@@ -227,7 +228,7 @@ class ServerCog(commands.Cog):
         if sftp_host and sftp_port:
             e.add_field(name="SFTP", value=f"{sftp_host}:{sftp_port}", inline=False)
 
-        await inter.followup.send(embed=e, ephemeral=True)
+        await inter.followup.send(embed=e, ephemeral=False)
 
     @app_commands.command(name="logs", description="Tail recent console logs (fast, recent only; your key).")
     @app_commands.describe(server="Alias/UUID", lines="How many lines (default 50, max 200)")

@@ -1,12 +1,15 @@
 from __future__ import annotations
-from datetime import datetime, timedelta, timezone
+
+from datetime import UTC, datetime
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..db.models import UserCredential
-from ..crypto import encrypt_token, decrypt_token, fingerprint
-from ..config import settings
 
-TZUTC = timezone.utc
+from ..config import settings
+from ..crypto import decrypt_token, encrypt_token, fingerprint
+from ..db.models import UserCredential
+
+TZUTC = UTC
 
 def _to_naive_utc(dt: datetime | None) -> datetime | None:
     if dt is None:

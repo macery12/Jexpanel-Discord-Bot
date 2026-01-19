@@ -1,7 +1,13 @@
 from __future__ import annotations
-import asyncio, json, time, collections
+
+import asyncio
+import collections
+import json
+import time
+
 import websockets
 from yarl import URL
+
 
 async def _dial(socket_url: str, panel_url: str, token: str):
     origin = str(URL(panel_url).with_path("/")).rstrip("/")
@@ -18,7 +24,7 @@ async def _auth(ws, token: str, timeout: float = 5.0) -> None:
     while time.time() < end:
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=end - time.time())
-        except asyncio.TimeoutError:
+        except TimeoutError:
             break
         data = json.loads(raw)
         ev = data.get("event")
@@ -42,7 +48,7 @@ async def fetch_recent_logs(socket_url: str, panel_url: str, token: str, max_lin
         while time.time() - start < total_timeout:
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=idle_timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
             last_activity = time.time()
             data = json.loads(raw)

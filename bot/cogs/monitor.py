@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from discord.ext import commands
+
 
 class MonitorCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
