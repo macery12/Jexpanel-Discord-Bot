@@ -149,14 +149,29 @@ def _flatten_call_tree(
         source_type, source_name = parent_source
     
     # Create record for this node
+    # Handle cases where totalTime or times might be arrays/lists (some Spark formats)
+    total_time_raw = node.get("totalTime", 0.0)
+    times_raw = node.get("times", 0)
+    
+    # If they're lists, take the first element or sum them
+    if isinstance(total_time_raw, list):
+        total_time = sum(total_time_raw) if total_time_raw else 0.0
+    else:
+        total_time = float(total_time_raw) if total_time_raw else 0.0
+    
+    if isinstance(times_raw, list):
+        times = sum(times_raw) if times_raw else 0
+    else:
+        times = int(times_raw) if times_raw else 0
+    
     record = {
         "method": clean_method,
         "full_method": method,
         "source_type": source_type,
         "source_name": source_name,
-        "self_time": node.get("totalTime", 0.0),  # Spark uses totalTime for self time
-        "total_time": node.get("totalTime", 0.0),
-        "sample_count": node.get("times", 0),
+        "self_time": total_time,
+        "total_time": total_time,
+        "sample_count": times,
     }
     records.append(record)
     

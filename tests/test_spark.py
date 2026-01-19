@@ -583,6 +583,75 @@ class TestAnalyzeSparkReport:
             assert "top_sources" in result
             assert len(result["top_sources"]) > 0
 
+    @pytest.mark.asyncio
+    async def test_array_values_in_nodes(self):
+        """Test handling of nodes where times/totalTime are arrays instead of scalars."""
+        test_data = {
+            "type": "sampler",
+            "metadata": {
+                "platform": {
+                    "name": "Paper",
+                    "version": "1.20.1",
+                    "minecraftVersion": "1.20.1",
+                }
+            },
+            "samplerMetadata": {
+                "type": "sampler",
+                "startTime": 1000000,
+                "endTime": 1030000,
+                "samplerMode": "cpu",
+            },
+            "threads": [
+                {
+                    "name": "Server thread",
+                    "rootNode": {
+                        "name": "net.minecraft.server.MinecraftServer.tick",
+                        "totalTime": [100.0],  # Array instead of scalar
+                        "times": [1000],  # Array instead of scalar
+                        "children": [
+                            {
+                                "name": "test.method",
+                                "totalTime": [50.0, 25.0],  # Multiple values
+                                "times": [500, 250],
+                                "children": []
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        
+        async def mock_json():
+            return test_data
+        
+        mock_response = Mock()
+        mock_response.status = 200
+        mock_response.json = mock_json
+        
+        class MockSession:
+            async def __aenter__(self):
+                return self
+            
+            async def __aexit__(self, *args):
+                pass
+            
+            def get(self, *args, **kwargs):
+                class MockContext:
+                    async def __aenter__(ctx_self):
+                        return mock_response
+                    async def __aexit__(ctx_self, *args):
+                        pass
+                return MockContext()
+        
+        with patch("aiohttp.ClientSession", MockSession):
+            result = await analyze_spark_report("https://spark.lucko.me/arrays")
+            
+            # Should successfully handle array values
+            assert "summary" in result
+            assert "top_sources" in result
+            # Should have aggregated the array values correctly
+            assert len(result["top_sources"]) > 0
+
 
 class TestDiscordFormatting:
     """Test Discord message formatting."""
