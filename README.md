@@ -41,6 +41,14 @@ docker compose pull && docker compose up -d
 
 ## Commands
 
+### Performance Analysis
+
+- **`/spark <url>`** — Analyze Minecraft Spark profiler reports (NEW!)
+  - Identifies performance bottlenecks in plugins, mods, and vanilla
+  - Detects 7 categories of issues: CPU overuse, blocking I/O, entity lag, tile entity lag, redstone lag, scheduler abuse, and GC pressure
+  - Provides actionable recommendations
+  - See [SPARK_ANALYZER.md](SPARK_ANALYZER.md) for details
+
 ### Server Management
 
 - **`/server <server>`** — Interactive menu for server actions (NEW!)
