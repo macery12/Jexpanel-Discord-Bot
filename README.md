@@ -39,6 +39,34 @@ docker compose pull && docker compose up -d
 
 ---
 
+## Commands
+
+### Server Management
+
+- **`/server <server>`** — Interactive menu for server actions (NEW!)
+  - Shows a button-based menu with options to view status and logs
+  - Initial menu is ephemeral (private), button responses are public
+  - Supports server UUID, name, or alias as input
+  
+- **`/status <server>`** — Show live server status and resource usage
+  - Displays CPU, memory, disk, network stats with progress bars
+  - Shows server power state and uptime
+  
+- **`/logs <server> [lines]`** — View recent console logs (default 50 lines, max 200)
+
+- **`/list [filter] [panel_url]`** — List your Pterodactyl servers
+
+- **`/console <server> <command>`** — Send console command (admin-only)
+
+- **`/backups <server>`** — List server backups
+
+### User Management
+
+- **`/link <panel_url> <api_key>`** — Link your Pterodactyl API key
+- **`/alias <server> <alias>`** — Create a friendly alias for a server
+
+---
+
 ## Discord setup checklist
 
 1. Create an application + bot in **Discord Developer Portal**.
