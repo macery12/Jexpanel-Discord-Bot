@@ -127,6 +127,8 @@ class ServerCog(commands.Cog):
 
     @app_commands.command(name="list", description="List your Pterodactyl servers.")
     @app_commands.describe(filter="Filter by name or UUID prefix", panel_url="Filter by a specific panel URL (optional)")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def server_list(self, inter: discord.Interaction, filter: str | None = None, panel_url: str | None = None):
         await inter.response.defer(ephemeral=True)
         panels = [panel_url] if panel_url else await list_user_panels(inter.user.id)
@@ -156,6 +158,8 @@ class ServerCog(commands.Cog):
 
     @app_commands.command(name="status", description="Show power + live stats for a server (using your key).")
     @app_commands.describe(server="Alias, partial, or full UUID.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def server_status(self, inter: discord.Interaction, server: str):
         await inter.response.defer(ephemeral=False)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
@@ -232,6 +236,8 @@ class ServerCog(commands.Cog):
 
     @app_commands.command(name="logs", description="Tail recent console logs (fast, recent only; your key).")
     @app_commands.describe(server="Alias/UUID", lines="How many lines (default 50, max 200)")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def server_logs(self, inter: discord.Interaction, server: str, lines: int = 50):
         await inter.response.defer(ephemeral=True)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
@@ -284,6 +290,8 @@ class ServerCog(commands.Cog):
 
     @app_commands.command(name="backups", description="List server backups (your key).")
     @app_commands.describe(server="Alias/UUID")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def server_backups(self, inter: discord.Interaction, server: str):
         await inter.response.defer(ephemeral=True)
         uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)

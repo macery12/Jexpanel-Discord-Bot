@@ -40,6 +40,8 @@ class KeysCog(commands.Cog):
         token="Client API token (kept encrypted)",
         label="Optional number label (1-9)",
     )
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def link(self, inter: discord.Interaction, panel_url: str, token: str, label: int | None = None):
         await inter.response.defer(ephemeral=True)
         if label is not None and (label < 1 or label > 9):
@@ -60,6 +62,8 @@ class KeysCog(commands.Cog):
         )
 
     @app_commands.command(name="keys_list", description="List your linked keys.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def keys_list(self, inter: discord.Interaction):
         await inter.response.defer(ephemeral=True)
         async with SessionLocal() as s:
@@ -77,6 +81,8 @@ class KeysCog(commands.Cog):
 
     @app_commands.command(name="keys_set_default", description="Set your default key for a panel.")
     @app_commands.describe(panel_url="Panel URL", label="Label (1-9)")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def keys_set_default(self, inter: discord.Interaction, panel_url: str, label: int):
         await inter.response.defer(ephemeral=True)
         async with SessionLocal() as s:
@@ -88,6 +94,8 @@ class KeysCog(commands.Cog):
 
     @app_commands.command(name="unlink", description="Remove one of your keys (or the default if label omitted).")
     @app_commands.describe(panel_url="Panel URL", label="Optional label to remove")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def unlink(self, inter: discord.Interaction, panel_url: str, label: int | None = None):
         await inter.response.defer(ephemeral=True)
         async with SessionLocal() as s:
@@ -99,6 +107,8 @@ class KeysCog(commands.Cog):
 
     @app_commands.command(name="keys_wipe_mine", description='Delete ALL your keys (type "CONFIRM").')
     @app_commands.describe(confirm='Type exactly "CONFIRM" to proceed')
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def keys_wipe_mine(self, inter: discord.Interaction, confirm: str):
         await inter.response.defer(ephemeral=True)
         if confirm != "CONFIRM":
