@@ -14,6 +14,9 @@ from ..core.permissions import SERVER_UUID_RE, has_admin_role
 from ..db import SessionLocal
 from ..db.models import ServerAlias, UserCredential
 
+# Constants
+DISCORD_MESSAGE_LIMIT = 1900  # Max length for Discord message content before using file attachment
+
 
 def _fmt_bytes(n: int | None) -> str:
     if not n:
@@ -338,7 +341,7 @@ class ServerActionView(View):
                 await interaction.followup.send("No logs available.", ephemeral=False)
                 return
 
-            if len(logs) > 1900:
+            if len(logs) > DISCORD_MESSAGE_LIMIT:
                 file = discord.File(io.BytesIO(logs.encode("utf-8")), filename="logs.txt")
                 await interaction.followup.send(
                     f"📜 **Logs for {self.server_name}**", file=file, ephemeral=False
@@ -494,7 +497,7 @@ class ServerCog(commands.Cog):
                 await inter.followup.send("No logs available.", ephemeral=True)
                 return
 
-            if len(logs) > 1900:
+            if len(logs) > DISCORD_MESSAGE_LIMIT:
                 await inter.followup.send(
                     file=discord.File(io.BytesIO(logs.encode("utf-8")), filename="logs_tail.txt"),
                     ephemeral=True,
