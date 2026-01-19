@@ -6,7 +6,7 @@ import os
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .config import settings
+from ..config import settings
 
 
 def _aad(discord_user_id: int, panel_url: str) -> bytes:
