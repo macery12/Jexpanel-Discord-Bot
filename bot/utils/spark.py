@@ -12,23 +12,31 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-
 # Known mod signatures and their performance characteristics
 KNOWN_MOD_SIGNATURES = {
     "create": {
         "patterns": ["create", "contraption", "kinetic"],
         "issues": ["mechanical stress", "kinetic networks", "block entity ticking"],
-        "recommendations": "Reduce contraption complexity, limit rotation propagation chains, decrease kinetic network size",
+        "recommendations": (
+            "Reduce contraption complexity, limit rotation propagation chains, "
+            "decrease kinetic network size"
+        ),
     },
     "ae2": {
         "patterns": ["appliedenergistics2", "ae2", "appeng"],
         "issues": ["ME network recalculation", "crafting CPU load", "channel calculation"],
-        "recommendations": "Optimize ME network layout, reduce autocrafting complexity, use storage buses efficiently",
+        "recommendations": (
+            "Optimize ME network layout, reduce autocrafting complexity, "
+            "use storage buses efficiently"
+        ),
     },
     "mekanism": {
         "patterns": ["mekanism"],
         "issues": ["tile ticking", "gas/fluid simulation", "transmitter networks"],
-        "recommendations": "Reduce machine count, optimize pipe networks, disable advanced features in config",
+        "recommendations": (
+            "Reduce machine count, optimize pipe networks, "
+            "disable advanced features in config"
+        ),
     },
     "thermal": {
         "patterns": ["thermal", "cofh"],
@@ -43,7 +51,9 @@ KNOWN_MOD_SIGNATURES = {
     "immersiveengineering": {
         "patterns": ["immersiveengineering", "ie"],
         "issues": ["multiblock ticking", "wire networks"],
-        "recommendations": "Reduce multiblock count, optimize wire networks, consolidate power generation",
+        "recommendations": (
+            "Reduce multiblock count, optimize wire networks, consolidate power generation"
+        ),
     },
     "enderio": {
         "patterns": ["enderio"],
@@ -114,7 +124,9 @@ def _match_known_mod(source_name: str) -> dict[str, Any] | None:
     return None
 
 
-def _flatten_call_tree(node: dict[str, Any], parent_source: tuple[str, str] | None = None) -> list[dict[str, Any]]:
+def _flatten_call_tree(
+    node: dict[str, Any], parent_source: tuple[str, str] | None = None
+) -> list[dict[str, Any]]:
     """Recursively flatten the Spark call tree into analyzable records.
     
     Args:
@@ -207,7 +219,10 @@ def _detect_blocking_operations(records: list[dict[str, Any]]) -> list[dict[str,
                         "source_type": record["source_type"],
                         "source_name": record["source_name"],
                         "evidence": [f"{record['full_method']}: {record['self_time']:.2f}%"],
-                        "recommendation": "Move blocking I/O operations to async tasks or separate threads to prevent server lag",
+                        "recommendation": (
+                            "Move blocking I/O operations to async tasks or separate threads "
+                            "to prevent server lag"
+                        ),
                     })
                 break
     
@@ -245,7 +260,10 @@ def _detect_entity_ai_lag(records: list[dict[str, Any]]) -> list[dict[str, Any]]
             "source_type": "vanilla",
             "source_name": "minecraft",
             "evidence": evidence_list[:5],  # Limit to top 5
-            "recommendation": "Reduce mob caps, limit entity-dense farms, disable advanced mob AI features, or use mob limiter plugins",
+            "recommendation": (
+                "Reduce mob caps, limit entity-dense farms, disable advanced mob AI "
+                "features, or use mob limiter plugins"
+            ),
         })
     
     return alerts
@@ -288,7 +306,9 @@ def _detect_tile_entity_lag(records: list[dict[str, Any]]) -> list[dict[str, Any
             mod_info = _match_known_mod(source_name) if source_type == "mod" else None
             
             title = f"Block entity lag from {source_name}"
-            recommendation = "Reduce block entity count, consolidate machines, or optimize chunk loading"
+            recommendation = (
+                "Reduce block entity count, consolidate machines, or optimize chunk loading"
+            )
             
             if mod_info:
                 title = f"Block entity lag: {mod_info['issues'][0]}"
@@ -338,7 +358,10 @@ def _detect_redstone_lag(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "source_type": "vanilla",
             "source_name": "minecraft",
             "evidence": evidence_list[:5],
-            "recommendation": "Simplify redstone circuits, reduce observer usage, limit piston contraptions, or use Create mod optimizations",
+            "recommendation": (
+                "Simplify redstone circuits, reduce observer usage, limit piston "
+                "contraptions, or use Create mod optimizations"
+            ),
         })
     
     return alerts
@@ -366,7 +389,9 @@ def _detect_scheduler_abuse(records: list[dict[str, Any]]) -> list[dict[str, Any
         for pattern in scheduler_patterns:
             if re.search(pattern, method, re.IGNORECASE):
                 key = (record["source_type"], record["source_name"])
-                source_scheduler_time[key] = source_scheduler_time.get(key, 0.0) + record["self_time"]
+                source_scheduler_time[key] = (
+                    source_scheduler_time.get(key, 0.0) + record["self_time"]
+                )
                 
                 if key not in source_evidence:
                     source_evidence[key] = []
@@ -383,7 +408,10 @@ def _detect_scheduler_abuse(records: list[dict[str, Any]]) -> list[dict[str, Any
                 "source_type": source_type,
                 "source_name": source_name,
                 "evidence": source_evidence[(source_type, source_name)][:5],
-                "recommendation": "Review repeating tasks, increase task intervals, or batch operations to reduce tick overhead",
+                "recommendation": (
+                    "Review repeating tasks, increase task intervals, or batch operations "
+                    "to reduce tick overhead"
+                ),
             })
     
     return alerts
@@ -422,7 +450,10 @@ def _detect_gc_pressure(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "source_type": "vanilla",
             "source_name": "minecraft",
             "evidence": evidence_list[:5],
-            "recommendation": "Investigate object pooling, reduce collection resizing, or increase initial capacity of frequently-grown collections",
+            "recommendation": (
+                "Investigate object pooling, reduce collection resizing, or increase "
+                "initial capacity of frequently-grown collections"
+            ),
         })
     
     return alerts
@@ -529,11 +560,11 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
                 
                 data = await response.json()
     except aiohttp.ClientError as e:
-        raise ValueError(f"Failed to fetch report: {e}")
+        raise ValueError(f"Failed to fetch report: {e}") from e
     except ValueError:
         raise  # Re-raise ValueError as-is
     except Exception as e:
-        raise ValueError(f"Failed to parse report JSON: {e}")
+        raise ValueError(f"Failed to parse report JSON: {e}") from e
     
     if data is None:
         raise ValueError("Failed to fetch report data")
@@ -640,7 +671,10 @@ def format_discord_report(result: dict[str, Any]) -> str:
     lines = []
     lines.append("**📊 Spark Profile Analysis**")
     lines.append(f"Platform: {summary.get('platform', 'Unknown')}")
-    lines.append(f"MC: {summary.get('mc_version', 'Unknown')} | Duration: {summary.get('duration', 0):.1f}s")
+    lines.append(
+        f"MC: {summary.get('mc_version', 'Unknown')} | "
+        f"Duration: {summary.get('duration', 0):.1f}s"
+    )
     lines.append("")
     
     # Top sources
