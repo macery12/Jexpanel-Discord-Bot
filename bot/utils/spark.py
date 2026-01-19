@@ -582,6 +582,11 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
             node = thread["rootNode"]
             if node is not None:
                 return [node]
+        # Some Spark formats: thread itself might be the root node
+        # Check if thread has the fields that would make it a valid node
+        if "children" in thread and "times" in thread:
+            # Thread is structured as a call tree node itself
+            return [thread]
         return []
 
     for thread in threads:
@@ -602,7 +607,18 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
                 all_records.extend(records)
 
     if not all_records:
-        raise ValueError("No call tree records found in report")
+        # Provide helpful debugging info
+        if not threads:
+            raise ValueError("No threads found in report")
+        
+        # Check what fields the threads actually have
+        thread_info = []
+        for i, thread in enumerate(threads[:3]):  # Check first 3 threads
+            thread_keys = list(thread.keys())
+            thread_info.append(f"Thread {i} ({thread.get('name', 'unnamed')}): {thread_keys}")
+        
+        debug_msg = "No call tree records found in report. " + "; ".join(thread_info)
+        raise ValueError(debug_msg)
 
     # Aggregate by source
     top_sources = _aggregate_by_source(all_records)

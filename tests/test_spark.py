@@ -518,6 +518,71 @@ class TestAnalyzeSparkReport:
             with pytest.raises(ValueError, match="No call tree records found"):
                 await analyze_spark_report("https://spark.lucko.me/empty")
 
+    @pytest.mark.asyncio
+    async def test_thread_as_root_node(self):
+        """Test handling of threads where the thread itself is the root node."""
+        test_data = {
+            "type": "sampler",
+            "metadata": {
+                "platform": {
+                    "name": "Forge",
+                    "version": "47.4.0",
+                    "minecraftVersion": "1.20.1",
+                }
+            },
+            "samplerMetadata": {
+                "type": "sampler",
+                "startTime": 1768855885781,
+                "endTime": 1768862498094,
+                "samplerMode": "cpu",
+            },
+            "threads": [
+                {
+                    "name": "Server thread",
+                    "times": 5000,
+                    "totalTime": 100000,
+                    "children": [
+                        {
+                            "name": "net.minecraft.server.MinecraftServer.tick",
+                            "totalTime": 50.0,
+                            "times": 2500,
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        async def mock_json():
+            return test_data
+        
+        mock_response = Mock()
+        mock_response.status = 200
+        mock_response.json = mock_json
+        
+        class MockSession:
+            async def __aenter__(self):
+                return self
+            
+            async def __aexit__(self, *args):
+                pass
+            
+            def get(self, *args, **kwargs):
+                class MockContext:
+                    async def __aenter__(ctx_self):
+                        return mock_response
+                    async def __aexit__(ctx_self, *args):
+                        pass
+                return MockContext()
+        
+        with patch("aiohttp.ClientSession", MockSession):
+            result = await analyze_spark_report("https://spark.lucko.me/forge123")
+            
+            # Should successfully parse when thread itself is the root
+            assert "summary" in result
+            assert "top_sources" in result
+            assert len(result["top_sources"]) > 0
+
 
 class TestDiscordFormatting:
     """Test Discord message formatting."""
