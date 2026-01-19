@@ -635,6 +635,23 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
         debug_msg = "No call tree records found in report. " + "; ".join(thread_info)
         raise ValueError(debug_msg)
 
+    # Calculate total time from the first record (usually the root)
+    # In Spark, the first record is typically the root with total profiling time
+    total_time = all_records[0]["total_time"] if all_records else 1.0
+    
+    # If total_time is still 0, use sum of all top-level times
+    if total_time == 0:
+        total_time = sum(r["total_time"] for r in all_records)
+    
+    # Avoid division by zero
+    if total_time == 0:
+        total_time = 1.0
+    
+    # Convert absolute times to percentages relative to total profiling time
+    for record in all_records:
+        record["self_time"] = (record["self_time"] / total_time) * 100.0
+        record["total_time"] = (record["total_time"] / total_time) * 100.0
+
     # Aggregate by source
     top_sources = _aggregate_by_source(all_records)
 
