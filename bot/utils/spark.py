@@ -502,123 +502,109 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
         url: Spark profiler report URL (e.g., https://spark.lucko.me/...)
         
     Returns:
-        Dictionary containing analysis results with structure:
-        {
-            "summary": {
-                "platform": str,
-                "mc_version": str,
-                "duration": float,
-                "sampler": str
-            },
-            "top_sources": [
-                {
-                    "type": "mod|plugin|vanilla",
-                    "name": str,
-                    "self_time": float
-                }
-            ],
-            "alerts": [
-                {
-                    "severity": "CRITICAL|HIGH|MEDIUM|LOW",
-                    "title": str,
-                    "source_type": "mod|plugin|vanilla",
-                    "source_name": str,
-                    "evidence": [str],
-                    "recommendation": str
-                }
-            ]
-        }
+        Dictionary containing analysis results suitable for Discord reporting.
         
     Raises:
         ValueError: If URL is invalid or report cannot be fetched
     """
+    from urllib.parse import urlparse
+    import aiohttp
+
     # Validate URL
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError("Invalid URL provided")
-    
-    # Convert viewer URL to raw JSON URL if needed
+
+    # Construct raw full JSON URL for Lucko
     if "spark.lucko.me" in parsed.netloc or "sparkprofile" in url:
-        # Extract the report ID from various URL formats
         path_parts = parsed.path.strip("/").split("/")
         if len(path_parts) > 0 and path_parts[-1]:
             report_id = path_parts[-1]
-            # Construct raw data URL
-            json_url = f"https://spark.lucko.me/{report_id}?raw=1"
+            json_url = f"https://spark.lucko.me/{report_id}?raw=1&full=true"
         else:
             raise ValueError("Cannot extract report ID from URL")
     else:
         json_url = url
-    
-    # Fetch the report
-    data = None
+
+    # Fetch the report JSON
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(json_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status != 200:
                     raise ValueError(f"Failed to fetch report: HTTP {response.status}")
-                
                 data = await response.json()
-    except aiohttp.ClientError as e:
-        raise ValueError(f"Failed to fetch report: {e}") from e
-    except ValueError:
-        raise  # Re-raise ValueError as-is
     except Exception as e:
-        raise ValueError(f"Failed to parse report JSON: {e}") from e
-    
-    if data is None:
-        raise ValueError("Failed to fetch report data")
-    
-    # Validate it's a profiler report
-    metadata = data.get("metadata", {})
-    sampler_metadata = data.get("samplerMetadata", {})
-    
-    sampler_type = sampler_metadata.get("type", "")
+        raise ValueError(f"Failed to fetch or parse report JSON: {e}") from e
+
+    if not data:
+        raise ValueError("Empty report data")
+
+    # Determine sampler type
+    sampler_type = data.get("type")  # top-level
+    if not sampler_type and "samplerMetadata" in data:
+        sampler_type = data["samplerMetadata"].get("type", "")
+
     if sampler_type != "sampler":
         raise ValueError(f"Invalid report type: expected 'sampler', got '{sampler_type}'")
-    
-    # Extract summary information
-    platform_name = metadata.get("platformName", "Unknown")
-    platform_version = metadata.get("platformVersion", "Unknown")
-    mc_version = metadata.get("minecraftVersion", "Unknown")
-    
-    # Get duration from sampler metadata
+
+    # Extract platform info
+    metadata = data.get("metadata", {})
+    platform_info = metadata.get("platform", {})
+    platform_name = platform_info.get("name", "Unknown")
+    platform_version = platform_info.get("version", "Unknown")
+    mc_version = platform_info.get("minecraftVersion", "Unknown")
+
+    # Extract sampler info
+    sampler_metadata = data.get("samplerMetadata", {})
     start_time = sampler_metadata.get("startTime", 0)
     end_time = sampler_metadata.get("endTime", 0)
-    duration_ms = end_time - start_time
-    duration_sec = duration_ms / 1000.0 if duration_ms > 0 else 0.0
-    
+    # If endTime missing, fallback to duration 0
+    duration_sec = ((end_time - start_time) / 1000.0) if (end_time and start_time) else 0.0
     sampler_mode = sampler_metadata.get("samplerMode", "cpu")
-    
+
     summary = {
         "platform": f"{platform_name} {platform_version}",
         "mc_version": mc_version,
         "duration": duration_sec,
         "sampler": sampler_mode,
     }
-    
-    # Parse the call tree
+
+    # Parse threads
     threads = data.get("threads", [])
     all_records = []
-    
+
     for thread in threads:
-        # Focus on server thread (main thread)
-        thread_name = thread.get("name", "")
-        if "Server thread" in thread_name or "main" in thread_name.lower():
-            root_node = thread.get("rootNode", {})
-            records = _flatten_call_tree(root_node)
-            all_records.extend(records)
-    
+        # Check server/main thread first
+        thread_name = thread.get("name", "").lower()
+        if "server" in thread_name or "main" in thread_name:
+            # Forge full JSON may have 'rootNodes' (list) instead of 'rootNode'
+            roots = thread.get("rootNodes") or thread.get("rootNode")
+            if not roots:
+                continue
+            if isinstance(roots, dict):
+                roots = [roots]  # wrap single dict in list
+            for root in roots:
+                records = _flatten_call_tree(root)
+                all_records.extend(records)
+
+    # If still empty, fallback to all threads
     if not all_records:
-        # If no server thread found, process all threads
         for thread in threads:
-            root_node = thread.get("rootNode", {})
-            records = _flatten_call_tree(root_node)
-            all_records.extend(records)
-    
+            roots = thread.get("rootNodes") or thread.get("rootNode")
+            if not roots:
+                continue
+            if isinstance(roots, dict):
+                roots = [roots]
+            for root in roots:
+                records = _flatten_call_tree(root)
+                all_records.extend(records)
+
+    if not all_records:
+        raise ValueError("No call tree records found in report")
+
     # Aggregate by source
     top_sources = _aggregate_by_source(all_records)
-    
+
     # Run detection rules
     alerts = []
     alerts.extend(_detect_source_cpu_overuse(top_sources))
@@ -628,16 +614,17 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     alerts.extend(_detect_redstone_lag(all_records))
     alerts.extend(_detect_scheduler_abuse(all_records))
     alerts.extend(_detect_gc_pressure(all_records))
-    
+
     # Sort alerts by severity
     severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     alerts.sort(key=lambda a: severity_order.get(a["severity"], 999))
-    
+
     return {
         "summary": summary,
-        "top_sources": top_sources[:10],  # Top 10 sources
+        "top_sources": top_sources[:10],  # top 10 sources
         "alerts": alerts,
     }
+
 
 
 def format_discord_report(result: dict[str, Any]) -> str:
