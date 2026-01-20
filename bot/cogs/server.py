@@ -572,6 +572,110 @@ class ServerCog(commands.Cog):
             )
         await inter.followup.send("\n".join(lines), ephemeral=True)
 
+    @app_commands.command(
+        name="players",
+        description="Show the number of online players on a Minecraft server (your key).",
+    )
+    @app_commands.describe(server="Alias/UUID of the Minecraft server")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def server_players(self, inter: discord.Interaction, server: str):
+        await inter.response.defer(ephemeral=False)
+        uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
+        if not uuid or not panel:
+            await inter.followup.send(
+                "Server not found. Try `/link` or specify the correct alias.",
+                ephemeral=True,
+            )
+            return
+
+        tok = await get_user_token_for_panel(inter.user.id, panel)
+        if not tok:
+            await inter.followup.send("No key for that panel. Use `/link`.", ephemeral=True)
+            return
+
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession() as sess:
+                cli = PteroClient(sess, panel, tok)
+                # Get server details for the name
+                details = await cli.server_details(uuid)
+                server_name = details.get("name", "(unknown)")
+
+                # Get network allocations
+                allocations = await cli.get_network_allocations(uuid)
+
+                if not allocations:
+                    await inter.followup.send(
+                        f"Server '{server_name}' has no network allocations configured.",
+                        ephemeral=True,
+                    )
+                    return
+
+                # Find the default (primary) allocation
+                primary_alloc = None
+                for alloc in allocations:
+                    if alloc.get("is_default"):
+                        primary_alloc = alloc
+                        break
+
+                # If no default found, use the first one
+                if not primary_alloc:
+                    primary_alloc = allocations[0]
+
+                ip = primary_alloc.get("ip")
+                port = primary_alloc.get("port")
+
+                if not ip or not port:
+                    await inter.followup.send(
+                        f"Server '{server_name}' has invalid network configuration.",
+                        ephemeral=True,
+                    )
+                    return
+
+        except Exception as e:
+            await inter.followup.send(f"Error fetching server information: {e}", ephemeral=True)
+            return
+
+        # Query the Minecraft server
+        try:
+            from mcstatus import JavaServer
+
+            mc_server = JavaServer.lookup(f"{ip}:{port}")
+            status = await mc_server.async_status()
+
+            player_count = status.players.online
+            max_players = status.players.max
+
+            msg = (
+                f"🎮 Server **'{server_name}'** currently has "
+                f"**{player_count}/{max_players}** players online."
+            )
+            await inter.followup.send(msg, ephemeral=False)
+        except Exception as e:
+            # Handle different types of errors
+            error_msg = str(e).lower()
+            if "timed out" in error_msg or "timeout" in error_msg:
+                msg = (
+                    f"⚠️ Server **'{server_name}'** is unreachable or "
+                    f"not responding at `{ip}:{port}`."
+                )
+                await inter.followup.send(msg, ephemeral=False)
+            elif "refused" in error_msg or "connection" in error_msg:
+                msg = (
+                    f"⚠️ Server **'{server_name}'** is offline or "
+                    f"not accepting connections at `{ip}:{port}`."
+                )
+                await inter.followup.send(msg, ephemeral=False)
+            else:
+                msg = (
+                    f"❌ Error querying Minecraft server **'{server_name}'** "
+                    f"at `{ip}:{port}`: {e}"
+                )
+                await inter.followup.send(msg, ephemeral=False)
+
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerCog(bot))

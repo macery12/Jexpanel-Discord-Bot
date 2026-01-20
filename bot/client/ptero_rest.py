@@ -83,3 +83,11 @@ class PteroClient:
             r.raise_for_status()
             chunk = await r.content.read(max_bytes)
             return chunk
+
+    async def get_network_allocations(self, identifier: str) -> list[dict[str, Any]]:
+        """Fetch network allocations for a server."""
+        url = self.base.with_path(f"/api/client/servers/{identifier}/network/allocations")
+        async with self.session.get(url, headers=self._headers()) as r:
+            r.raise_for_status()
+            data = await r.json()
+            return [d["attributes"] for d in data.get("data", [])]
