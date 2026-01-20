@@ -13,6 +13,7 @@ SQLAlchemy>=2.0.30
 aiosqlite>=0.20.0
 alembic>=1.13.0
 cryptography>=42.0.5
+argon2-cffi>=23.1.0
 
 # Minecraft server status
 mcstatus>=11.0.0

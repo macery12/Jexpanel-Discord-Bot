@@ -106,6 +106,28 @@ For developers making schema changes, see [alembic/README.md](alembic/README.md)
 - **Admin visibility** (`/panel_*`): set **Application API** key in `PTERO_APP_API_KEY` and your `PTERO_PANEL_URL`.
 - Optional: `PTERO_CLIENT_API_KEY` as a fallback client key (per-user keys preferred).
 
+### Security
+
+This bot implements industry-standard security for API key storage:
+
+- **🔐 AES-256-GCM encryption** for all stored API keys
+- **🔑 Per-user key derivation** using Argon2id (OWASP recommended)
+- **🧂 Random salts** prevent rainbow table attacks
+- **✅ Authenticated encryption** detects tampering
+- **🔄 Key versioning** for rotation support
+
+**Important:** Generate a secure 256-bit encryption key:
+```bash
+openssl rand -hex 32
+```
+
+Add it to your `.env` file:
+```
+ENCRYPTION_KEY=your_64_character_hex_key_here
+```
+
+For detailed security documentation, see [SECURITY.md](SECURITY.md).
+
 ---
 
 ## CI/CD — Multi-arch Docker builds (GHCR)

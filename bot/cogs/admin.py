@@ -102,6 +102,54 @@ class AdminCog(commands.Cog):
                 f"❌ Global alias **`{alias}`** not found.", ephemeral=True
             )
 
+    @app_commands.command(
+        name="migrate_credentials",
+        description="Migrate stored credentials to enhanced encryption (admin-only)."
+    )
+    @app_commands.describe(user_id="Optional: specific user ID to migrate, or leave empty for all users")
+    async def migrate_credentials(self, inter: discord.Interaction, user_id: str | None = None):
+        if not has_admin_role(inter):
+            await inter.response.send_message("You don't have permission.", ephemeral=True)
+            return
+        
+        await inter.response.defer(ephemeral=True)
+        
+        try:
+            async with SessionLocal() as s:
+                from ..services.credentials import migrate_all_user_credentials
+                from ..db.models import UserCredential
+                from sqlalchemy import select
+                
+                if user_id:
+                    # Migrate specific user
+                    user_id_int = int(user_id)
+                    migrated = await migrate_all_user_credentials(s, user_id_int)
+                    await inter.followup.send(
+                        f"✅ Migrated {migrated} credential(s) for user {user_id}.",
+                        ephemeral=True
+                    )
+                else:
+                    # Migrate all users
+                    res = await s.execute(
+                        select(UserCredential.discord_user_id).distinct()
+                    )
+                    user_ids = [row[0] for row in res.all()]
+                    
+                    total_migrated = 0
+                    for uid in user_ids:
+                        migrated = await migrate_all_user_credentials(s, uid)
+                        total_migrated += migrated
+                    
+                    await inter.followup.send(
+                        f"✅ Migrated {total_migrated} credential(s) for {len(user_ids)} user(s).",
+                        ephemeral=True
+                    )
+        except Exception as e:
+            msg = str(e)
+            if len(msg) > 300:
+                msg = msg[:300] + "…"
+            await inter.followup.send(f"Migration failed: `{msg}`", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))
