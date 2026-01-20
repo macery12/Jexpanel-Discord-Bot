@@ -12,7 +12,7 @@ from ..client.ptero_rest import PteroClient
 from ..client.ptero_ws import fetch_recent_logs, send_console_command
 from ..core.permissions import SERVER_UUID_RE, has_admin_role
 from ..db import SessionLocal
-from ..db.models import ServerAlias, UserCredential
+from ..db.models import UserCredential
 
 # Constants
 DISCORD_MESSAGE_LIMIT = 1900  # Max length for Discord message content before using file attachment
@@ -91,7 +91,7 @@ async def list_user_panels(user_id: int):
         res = await s.execute(
             select(UserCredential.panel_url).where(UserCredential.discord_user_id == user_id)
         )
-        urls = sorted(set([row[0] for row in res.all()]))
+        urls = sorted({row[0] for row in res.all()})
         return urls
 
 

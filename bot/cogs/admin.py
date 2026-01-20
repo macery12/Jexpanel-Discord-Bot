@@ -3,20 +3,27 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import select
 
 from ..core.permissions import SERVER_UUID_RE, has_admin_role
 from ..db import SessionLocal
-from ..db.models import ServerAlias
 
 
 class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="alias_set", description="Set a global alias for a server UUID (admin-only, visible to all).")
-    @app_commands.describe(uuid="Full server UUID", alias="Alias to assign", panel_url="Optional panel URL to speed up lookups")
-    async def alias_set(self, inter: discord.Interaction, uuid: str, alias: str, panel_url: str | None = None):
+    @app_commands.command(
+        name="alias_set",
+        description="Set a global alias for a server UUID (admin-only, visible to all).",
+    )
+    @app_commands.describe(
+        uuid="Full server UUID",
+        alias="Alias to assign",
+        panel_url="Optional panel URL to speed up lookups",
+    )
+    async def alias_set(
+        self, inter: discord.Interaction, uuid: str, alias: str, panel_url: str | None = None
+    ):
         if not has_admin_role(inter):
             await inter.response.send_message("You don't have permission.", ephemeral=True)
             return
@@ -33,14 +40,20 @@ class AdminCog(commands.Cog):
                     s, alias=alias, uuid=uuid, panel_url=panel_url, user_id=None
                 )
                 await s.commit()
-            await inter.followup.send(f"✅ Global alias `{alias}` → `{uuid}` saved. Panel: `{panel_url or 'unspecified'}`", ephemeral=True)
+            await inter.followup.send(
+                f"✅ Global alias `{alias}` → `{uuid}` saved. "
+                f"Panel: `{panel_url or 'unspecified'}`",
+                ephemeral=True,
+            )
         except Exception as e:
             msg = str(e)
             if len(msg) > 300:
                 msg = msg[:300] + "…"
             await inter.followup.send(f"Alias save failed: `{msg}`", ephemeral=True)
 
-    @app_commands.command(name="alias_list_global", description="List all global server aliases (admin-only).")
+    @app_commands.command(
+        name="alias_list_global", description="List all global server aliases (admin-only)."
+    )
     async def alias_list_global(self, inter: discord.Interaction):
         if not has_admin_role(inter):
             await inter.response.send_message("You don't have permission.", ephemeral=True)
@@ -63,7 +76,9 @@ class AdminCog(commands.Cog):
         
         await inter.followup.send("\n".join(lines), ephemeral=True)
 
-    @app_commands.command(name="alias_delete_global", description="Delete a global server alias (admin-only).")
+    @app_commands.command(
+        name="alias_delete_global", description="Delete a global server alias (admin-only)."
+    )
     @app_commands.describe(alias="The global alias to delete")
     async def alias_delete_global(self, inter: discord.Interaction, alias: str):
         if not has_admin_role(inter):

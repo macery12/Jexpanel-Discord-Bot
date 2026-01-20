@@ -1,7 +1,7 @@
 """Alias management service for server identification."""
 from __future__ import annotations
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import ServerAlias
@@ -35,7 +35,7 @@ async def get_alias(
     # Then try global alias (discord_user_id is None)
     res = await session.execute(
         select(ServerAlias).where(
-            and_(ServerAlias.alias == alias, ServerAlias.discord_user_id == None)
+            and_(ServerAlias.alias == alias, ServerAlias.discord_user_id.is_(None))
         )
     )
     return res.scalar_one_or_none()
@@ -72,7 +72,7 @@ async def list_global_aliases(session: AsyncSession) -> list[ServerAlias]:
     """
     res = await session.execute(
         select(ServerAlias)
-        .where(ServerAlias.discord_user_id == None)
+        .where(ServerAlias.discord_user_id.is_(None))
         .order_by(ServerAlias.alias)
     )
     return list(res.scalars().all())
