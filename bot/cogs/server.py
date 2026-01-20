@@ -643,10 +643,24 @@ class ServerCog(commands.Cog):
             from mcstatus import JavaServer
 
             mc_server = JavaServer.lookup(f"{ip}:{port}")
-            status = await mc_server.async_status()
-
-            player_count = status.players.online
-            max_players = status.players.max
+            
+            # Try query protocol first (provides better player info), fallback to status
+            player_list = None
+            player_count = 0
+            max_players = 0
+            
+            try:
+                query = await mc_server.async_query()
+                player_count = query.players.online
+                max_players = query.players.max
+                player_list = query.players.names if query.players.names else None
+            except Exception:
+                # Fallback to status protocol if query is not enabled
+                status = await mc_server.async_status()
+                player_count = status.players.online
+                max_players = status.players.max
+                if status.players.sample:
+                    player_list = [p.name for p in status.players.sample]
 
             # Build the message with player list if available
             msg_parts = [
@@ -654,10 +668,11 @@ class ServerCog(commands.Cog):
                 f"**{player_count}/{max_players}** players online."
             ]
 
-            # Add player list if available
-            if status.players.sample:
-                player_names = [p.name for p in status.players.sample]
-                msg_parts.append(f"\n\n**Players:** {', '.join(player_names)}")
+            # Add player list if available (vertical list format)
+            if player_list and len(player_list) > 0:
+                msg_parts.append("\n\n**Players:**")
+                for player_name in player_list:
+                    msg_parts.append(f"\n• {player_name}")
 
             msg = "".join(msg_parts)
             await inter.followup.send(msg, ephemeral=False)
