@@ -342,24 +342,25 @@ class TestAnalyzeSparkReport:
                 "duration": 30.0,
                 "samplerMode": "cpu",
             },
-            "sampler": {
-                "threadGroups": {
-                    "Server thread": {
-                        "entries": [
-                            {
-                                "name": "net.minecraft.server.MinecraftServer.tick",
-                                "percent": 100.0,
-                                "samples": 1000
-                            },
-                            {
-                                "name": "create@0.5.1::ContraptionEntity.tick",
-                                "percent": 15.0,
-                                "samples": 300
-                            }
-                        ]
-                    }
+            "threads": [
+                {
+                    "name": "Server thread",
+                    "totalTime": 100000,
+                    "children": [
+                        {
+                            "name": "net.minecraft.server.MinecraftServer.tick",
+                            "totalTime": 100000,
+                            "children": [
+                                {
+                                    "name": "create@0.5.1::ContraptionEntity.tick",
+                                    "totalTime": 15000,
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
                 }
-            }
+            ]
         }
         
         async def mock_json():
@@ -458,7 +459,7 @@ class TestAnalyzeSparkReport:
 
     @pytest.mark.asyncio
     async def test_empty_threadgroups(self):
-        """Test handling of sampler with empty threadGroups."""
+        """Test handling of empty threads array."""
         test_data = {
             "metadata": {
                 "platform": {
@@ -468,9 +469,7 @@ class TestAnalyzeSparkReport:
                 },
                 "duration": 30.0,
             },
-            "sampler": {
-                "threadGroups": {}  # Empty thread groups
-            }
+            "threads": []  # Empty threads array
         }
         
         async def mock_json():
@@ -496,13 +495,13 @@ class TestAnalyzeSparkReport:
                 return MockContext()
         
         with patch("aiohttp.ClientSession", MockSession):
-            # Should raise error about no sampler data
-            with pytest.raises(ValueError, match="No sampler data found"):
+            # Should raise error about no profiler data
+            with pytest.raises(ValueError, match="No profiler data"):
                 await analyze_spark_report("https://spark.lucko.me/empty")
 
     @pytest.mark.asyncio
     async def test_threadgroups_parsing(self):
-        """Test parsing of Spark threadGroups format."""
+        """Test parsing of Spark threads format."""
         test_data = {
             "metadata": {
                 "platform": {
@@ -513,24 +512,25 @@ class TestAnalyzeSparkReport:
                 "duration": 60.0,
                 "samplerMode": "cpu",
             },
-            "sampler": {
-                "threadGroups": {
-                    "Server thread": {
-                        "entries": [
-                            {
-                                "name": "net.minecraft.server.MinecraftServer.tick",
-                                "percent": 50.0,
-                                "samples": 2500
-                            },
-                            {
-                                "name": "create@0.5.1::ContraptionEntity.tick",
-                                "percent": 20.0,
-                                "samples": 1000
-                            }
-                        ]
-                    }
+            "threads": [
+                {
+                    "name": "Server thread",
+                    "totalTime": 100000,
+                    "children": [
+                        {
+                            "name": "net.minecraft.server.MinecraftServer.tick",
+                            "totalTime": 50000,
+                            "children": [
+                                {
+                                    "name": "create@0.5.1::ContraptionEntity.tick",
+                                    "totalTime": 20000,
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
                 }
-            }
+            ]
         }
         
         async def mock_json():
@@ -558,7 +558,7 @@ class TestAnalyzeSparkReport:
         with patch("aiohttp.ClientSession", MockSession):
             result = await analyze_spark_report("https://spark.lucko.me/test")
             
-            # Should successfully parse threadGroups
+            # Should successfully parse threads format
             assert "summary" in result
             assert "top_sources" in result
             assert len(result["top_sources"]) > 0
@@ -577,28 +577,30 @@ class TestAnalyzeSparkReport:
                 },
                 "duration": 30.0,
             },
-            "sampler": {
-                "threadGroups": {
-                    "Server thread": {
-                        "entries": [
-                            {
-                                "name": "net.minecraft.server.level.ServerLevel.tick",
-                                "percent": 45.0,
-                                "samples": 2250
-                            }
-                        ]
-                    },
-                    "Async Chat Thread": {
-                        "entries": [
-                            {
-                                "name": "io.papermc.paper.chat.ChatProcessor.process",
-                                "percent": 5.0,
-                                "samples": 250
-                            }
-                        ]
-                    }
+            "threads": [
+                {
+                    "name": "Server thread",
+                    "totalTime": 90000,
+                    "children": [
+                        {
+                            "name": "net.minecraft.server.level.ServerLevel.tick",
+                            "totalTime": 45000,
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "name": "Async Chat Thread",
+                    "totalTime": 10000,
+                    "children": [
+                        {
+                            "name": "io.papermc.paper.chat.ChatProcessor.process",
+                            "totalTime": 5000,
+                            "children": []
+                        }
+                    ]
                 }
-            }
+            ]
         }
         
         async def mock_json():
@@ -626,10 +628,10 @@ class TestAnalyzeSparkReport:
         with patch("aiohttp.ClientSession", MockSession):
             result = await analyze_spark_report("https://spark.lucko.me/arrays")
             
-            # Should successfully handle array values
+            # Should successfully handle multiple threads
             assert "summary" in result
             assert "top_sources" in result
-            # Should have aggregated the array values correctly
+            # Should have aggregated the values correctly
             assert len(result["top_sources"]) > 0
 
 

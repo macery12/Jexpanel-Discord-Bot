@@ -551,9 +551,11 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     if not data:
         raise ValueError("Empty report data")
 
-    # Spark reports should have a sampler section
-    if "sampler" not in data and "threads" not in data:
-        raise ValueError("Invalid Spark report: missing sampler data")
+    # Spark reports should have a threads section
+    if "threads" not in data:
+        raise ValueError(
+            "Invalid Spark report: missing 'threads' data. The report may be incomplete."
+        )
 
     # Extract platform info
     metadata = data.get("metadata", {})
@@ -584,48 +586,58 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
         "sampler": sampler_mode,
     }
 
-    # Parse sampler data - Spark uses threadGroups with pre-calculated percentages
+    # Parse profiler data - Spark uses 'threads' array with call trees
     all_records = []
-    sampler = data.get("sampler", {})
-    thread_groups = sampler.get("threadGroups", {})
+    threads = data.get("threads", [])
     
-    if not thread_groups:
-        # Fallback: check if data has old format with threads array
-        threads = data.get("threads", [])
-        if threads:
-            raise ValueError(
-                "Legacy Spark format detected. Please use a current Spark report. "
-                "Spark reports should have 'sampler.threadGroups' structure."
-            )
-        raise ValueError("No sampler data found in report")
+    if not threads:
+        raise ValueError(
+            "No profiler data found in report. "
+            "The report may be incomplete or use an unsupported format."
+        )
     
-    # Process each thread group
-    for thread_name, thread_data in thread_groups.items():
-        entries = thread_data.get("entries", [])
+    # Calculate total time across all threads for percentage calculation
+    total_root_time = 0.0
+    for thread in threads:
+        # Get total time from this thread's root
+        thread_time_raw = thread.get("totalTime", 0.0)
+        if isinstance(thread_time_raw, list):
+            thread_time = sum(thread_time_raw) if thread_time_raw else 0.0
+        else:
+            thread_time = float(thread_time_raw) if thread_time_raw else 0.0
+        total_root_time += thread_time
+    
+    if total_root_time == 0:
+        raise ValueError("No profiler data with valid timing found in report")
+    
+    # Process each thread
+    for thread in threads:
+        thread_name = thread.get("name", "Unknown Thread")
         
-        for entry in entries:
-            # Spark entries already have percentages calculated
-            method_name = entry.get("name", "")
-            percent = entry.get("percent", 0.0)
-            samples = entry.get("samples", 0)
+        # Get children (call tree nodes)
+        children = thread.get("children", [])
+        
+        # Process each root-level call in this thread
+        for child in children:
+            # Flatten the call tree recursively
+            thread_records = _flatten_call_tree(child)
             
-            # Extract source from method name
-            source_type, source_name, clean_method = _extract_source_from_method(method_name)
+            # Convert absolute times to percentages
+            for record in thread_records:
+                # Calculate percentage of total execution time
+                if total_root_time > 0:
+                    record["self_time"] = (record["self_time"] / total_root_time) * 100.0
+                    record["total_time"] = (record["total_time"] / total_root_time) * 100.0
+                else:
+                    record["self_time"] = 0.0
+                    record["total_time"] = 0.0
+                
+                record["thread"] = thread_name
             
-            record = {
-                "method": clean_method,
-                "full_method": method_name,
-                "source_type": source_type,
-                "source_name": source_name,
-                "self_time": percent,  # Already a percentage
-                "total_time": percent,  # Already a percentage
-                "sample_count": samples,
-                "thread": thread_name,
-            }
-            all_records.append(record)
+            all_records.extend(thread_records)
     
     if not all_records:
-        raise ValueError("No profiler entries found in sampler data")
+        raise ValueError("No call tree records found in profiler data")
 
     # Aggregate by source
     top_sources = _aggregate_by_source(all_records)
