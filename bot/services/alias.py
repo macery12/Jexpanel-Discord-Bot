@@ -145,6 +145,6 @@ async def delete_alias(
     alias_obj = res.scalar_one_or_none()
     
     if alias_obj:
-        await session.delete(alias_obj)
+        session.delete(alias_obj)
         return True
     return False
