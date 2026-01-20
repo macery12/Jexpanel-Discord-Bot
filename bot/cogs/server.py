@@ -648,29 +648,38 @@ class ServerCog(commands.Cog):
             player_count = status.players.online
             max_players = status.players.max
 
-            msg = (
-                f"🎮 Server **'{server_name}'** currently has "
+            # Build the message with player list if available
+            msg_parts = [
+                f"Server **'{server_name}'** currently has "
                 f"**{player_count}/{max_players}** players online."
-            )
+            ]
+
+            # Add player list if available
+            if status.players.sample and len(status.players.sample) > 0:
+                player_names = [p.name for p in status.players.sample]
+                msg_parts.append("\n\n**Players:**")
+                msg_parts.append(", ".join(player_names))
+
+            msg = "".join(msg_parts)
             await inter.followup.send(msg, ephemeral=False)
         except Exception as e:
             # Handle different types of errors
             error_msg = str(e).lower()
             if "timed out" in error_msg or "timeout" in error_msg:
                 msg = (
-                    f"⚠️ Server **'{server_name}'** is unreachable or "
+                    f"Server **'{server_name}'** is unreachable or "
                     f"not responding at `{ip}:{port}`."
                 )
                 await inter.followup.send(msg, ephemeral=False)
             elif "refused" in error_msg or "connection" in error_msg:
                 msg = (
-                    f"⚠️ Server **'{server_name}'** is offline or "
+                    f"Server **'{server_name}'** is offline or "
                     f"not accepting connections at `{ip}:{port}`."
                 )
                 await inter.followup.send(msg, ephemeral=False)
             else:
                 msg = (
-                    f"❌ Error querying Minecraft server **'{server_name}'** "
+                    f"Error querying Minecraft server **'{server_name}'** "
                     f"at `{ip}:{port}`: {e}"
                 )
                 await inter.followup.send(msg, ephemeral=False)
