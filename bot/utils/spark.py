@@ -1,753 +1,406 @@
 """Spark profiler report analyzer for Minecraft servers.
 
-Analyzes Spark profiler reports to detect performance issues in
-Paper/Spigot plugins, Forge/Fabric mods, and vanilla Minecraft.
+Analyzes Spark profiler reports to detect performance issues.
+Based on the parsing approach from test.py.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import aiohttp
 
-# Known mod signatures and their performance characteristics
-KNOWN_MOD_SIGNATURES = {
-    "create": {
-        "patterns": ["create", "contraption", "kinetic"],
-        "issues": ["mechanical stress", "kinetic networks", "block entity ticking"],
-        "recommendations": (
-            "Reduce contraption complexity, limit rotation propagation chains, "
-            "decrease kinetic network size"
-        ),
-    },
-    "ae2": {
-        "patterns": ["appliedenergistics2", "ae2", "appeng"],
-        "issues": ["ME network recalculation", "crafting CPU load", "channel calculation"],
-        "recommendations": (
-            "Optimize ME network layout, reduce autocrafting complexity, "
-            "use storage buses efficiently"
-        ),
-    },
-    "mekanism": {
-        "patterns": ["mekanism"],
-        "issues": ["tile ticking", "gas/fluid simulation", "transmitter networks"],
-        "recommendations": (
-            "Reduce machine count, optimize pipe networks, "
-            "disable advanced features in config"
-        ),
-    },
-    "thermal": {
-        "patterns": ["thermal", "cofh"],
-        "issues": ["machine ticking", "item/fluid transport"],
-        "recommendations": "Consolidate machines, optimize item ducts, reduce chunk loading",
-    },
-    "botania": {
-        "patterns": ["botania"],
-        "issues": ["mana spreader and burst logic", "flower ticking"],
-        "recommendations": "Reduce spreader count, optimize mana generation, consolidate flowers",
-    },
-    "immersiveengineering": {
-        "patterns": ["immersiveengineering", "ie"],
-        "issues": ["multiblock ticking", "wire networks"],
-        "recommendations": (
-            "Reduce multiblock count, optimize wire networks, consolidate power generation"
-        ),
-    },
-    "enderio": {
-        "patterns": ["enderio"],
-        "issues": ["conduit networks", "machine ticking"],
-        "recommendations": "Simplify conduit layouts, reduce machine density",
-    },
-    "industrialcraft": {
-        "patterns": ["ic2", "industrialcraft"],
-        "issues": ["e-net calculation", "machine updates"],
-        "recommendations": "Optimize power network, reduce active machines",
-    },
-}
 
-# Severity thresholds (percentage of total CPU time)
+# Severity thresholds for performance metrics
 SEVERITY_THRESHOLDS = {
-    "CRITICAL": 10.0,
-    "HIGH": 5.0,
-    "MEDIUM": 2.0,
-    "LOW": 0.0,
+    "tps": {
+        "CRITICAL": 15.0,  # Below 15 TPS
+        "HIGH": 18.0,      # Below 18 TPS
+        "MEDIUM": 19.5,    # Below 19.5 TPS
+    },
+    "mspt": {
+        "CRITICAL": 100.0,  # Above 100ms per tick
+        "HIGH": 65.0,       # Above 65ms per tick  
+        "MEDIUM": 55.0,     # Above 55ms per tick
+    },
+    "entities": {
+        "CRITICAL": 1500,
+        "HIGH": 1000,
+        "MEDIUM": 750,
+    },
+    "heap_usage": {
+        "CRITICAL": 90.0,  # % of committed
+        "HIGH": 80.0,
+        "MEDIUM": 70.0,
+    },
 }
 
 
-def _get_severity(percentage: float) -> str:
-    """Determine severity level based on CPU percentage."""
-    if percentage >= SEVERITY_THRESHOLDS["CRITICAL"]:
-        return "CRITICAL"
-    elif percentage >= SEVERITY_THRESHOLDS["HIGH"]:
-        return "HIGH"
-    elif percentage >= SEVERITY_THRESHOLDS["MEDIUM"]:
-        return "MEDIUM"
-    else:
-        return "LOW"
+def _ensure_raw_url(url: str) -> str:
+    """Ensure the Spark URL has ?raw=1 parameter."""
+    parts = urlparse(url)
+    qs = parse_qs(parts.query, keep_blank_values=True)
+    qs["raw"] = ["1"]
+    new_query = urlencode(qs, doseq=True)
+    return urlunparse((parts.scheme, parts.netloc, parts.path, parts.params, new_query, parts.fragment))
 
 
-def _extract_source_from_method(method: str) -> tuple[str, str, str]:
-    """Extract source information from a method name.
+def _validate_spark_url(url: str) -> bool:
+    """Validate that this is a Spark profiler URL."""
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return False
     
-    Returns:
-        tuple of (source_type, source_name, clean_method)
-        where source_type is one of: "mod", "plugin", "vanilla"
+    # Check if it's a spark.lucko.me URL or similar
+    if "spark" not in parsed.netloc.lower():
+        return False
+    
+    # Check if there's a report ID in the path
+    path_parts = [p for p in parsed.path.split("/") if p]
+    if len(path_parts) == 0 or not path_parts[-1]:
+        return False
+    
+    return True
+
+
+def _parse_spark_json(raw: dict[str, Any]) -> dict[str, Any]:
+    """Parse raw Spark JSON into a normalized structure.
+    
+    Based on the approach from test.py.
     """
-    # Check for :: separator (indicates source)
-    if "::" in method:
-        source_part, method_part = method.split("::", 1)
-        
-        # Check if source contains @ (mod with version)
-        if "@" in source_part:
-            # It's a mod - strip version
-            mod_id = source_part.split("@")[0]
-            return ("mod", mod_id, method_part)
-        else:
-            # It's a plugin
-            return ("plugin", source_part, method_part)
+    meta = raw.get("metadata", {})
+    platform = meta.get("platformStatistics", {})
+    sources = meta.get("sources", {})
     
-    # No source information - classify as vanilla
-    return ("vanilla", "minecraft", method)
+    # Platform info
+    platform_info = meta.get("platform", {})
+    
+    # Run info
+    start = meta.get("startTime", 0)
+    end = meta.get("endTime", 0)
+    duration = (end - start) / 1000 if start and end else 0.0
+    ticks = meta.get("numberOfTicks", 0)
+    avg_tps = round(ticks / duration, 2) if duration > 0 else 0.0
+    
+    # TPS / MSPT
+    tps = platform.get("tps", {})
+    mspt = platform.get("mspt", {})
+    
+    # Entities
+    world = platform.get("world", {})
+    entity_counts = world.get("entityCounts", {}) or {}
+    top_entities = dict(sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)[:10])
+    
+    # GC
+    gc = platform.get("gc", {}) or {}
+    
+    # Memory
+    heap = (platform.get("memory", {}) or {}).get("heap", {}) or {}
+    
+    # Mods (non built-in sources)
+    mods = {
+        mod_id: info.get("version")
+        for mod_id, info in (sources or {}).items()
+        if isinstance(info, dict) and not info.get("builtIn", False)
+    }
+    
+    return {
+        "platform": {
+            "name": platform_info.get("name", "Unknown"),
+            "version": platform_info.get("version", "Unknown"),
+            "mc_version": platform_info.get("minecraftVersion", "Unknown"),
+        },
+        "run": {
+            "duration_seconds": round(duration, 2),
+            "interval_ms": meta.get("interval"),
+            "ticks": ticks,
+            "approx_avg_tps": avg_tps,
+        },
+        "tps": {
+            "last_1m": tps.get("last1m"),
+            "last_5m": tps.get("last5m"),
+            "last_15m": tps.get("last15m"),
+        },
+        "mspt": {
+            "last_1m": mspt.get("last1m"),
+            "last_5m": mspt.get("last5m"),
+        },
+        "players": platform.get("playerCount"),
+        "entities": {
+            "total": world.get("totalEntities"),
+            "top": top_entities,
+        },
+        "gc": gc,
+        "memory": {
+            "heap_used_mb": round((heap.get("used", 0) / 1024 / 1024), 1),
+            "heap_committed_mb": round((heap.get("committed", 0) / 1024 / 1024), 1),
+        },
+        "mods": mods,
+    }
 
 
-def _match_known_mod(source_name: str) -> dict[str, Any] | None:
-    """Match a source name against known mod signatures."""
-    source_lower = source_name.lower()
+def _analyze_performance(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Analyze the parsed Spark data and detect issues."""
+    alerts = []
     
-    for mod_key, mod_data in KNOWN_MOD_SIGNATURES.items():
-        for pattern in mod_data["patterns"]:
-            if pattern in source_lower:
-                return {"key": mod_key, **mod_data}
+    # TPS Analysis
+    tps_1m = data["tps"].get("last_1m")
+    if tps_1m is not None:
+        severity = _get_tps_severity(tps_1m)
+        if severity:
+            alerts.append({
+                "severity": severity,
+                "title": f"Low TPS ({tps_1m:.1f})",
+                "description": f"Server TPS is {tps_1m:.1f}/20.0 over the last minute",
+                "recommendation": "Check MSPT and entity count. Consider reducing loaded chunks, entities, or mods.",
+            })
     
+    # MSPT Analysis
+    mspt_1m = data["mspt"].get("last_1m")
+    if mspt_1m and isinstance(mspt_1m, dict):
+        mean_mspt = mspt_1m.get("mean")
+        if mean_mspt is not None:
+            severity = _get_mspt_severity(mean_mspt)
+            if severity:
+                max_mspt = mspt_1m.get("max", 0)
+                p95_mspt = mspt_1m.get("percentile95", 0)
+                alerts.append({
+                    "severity": severity,
+                    "title": f"High MSPT ({mean_mspt:.1f}ms)",
+                    "description": (
+                        f"Average tick time: {mean_mspt:.1f}ms (target: <50ms)\n"
+                        f"95th percentile: {p95_mspt:.1f}ms\n"
+                        f"Max: {max_mspt:.1f}ms"
+                    ),
+                    "recommendation": "Server is struggling to keep up. Reduce entity count, optimize mods, or upgrade hardware.",
+                })
+    
+    # Entity Analysis
+    total_entities = data["entities"].get("total")
+    if total_entities is not None:
+        severity = _get_entity_severity(total_entities)
+        if severity:
+            top_entities = data["entities"].get("top", {})
+            top_list = "\n".join([f"  - {name}: {count}" for name, count in list(top_entities.items())[:5]])
+            alerts.append({
+                "severity": severity,
+                "title": f"High Entity Count ({total_entities})",
+                "description": f"Total entities: {total_entities}\nTop entities:\n{top_list}",
+                "recommendation": "Reduce mob spawning, clear items, or limit chunk loaders.",
+            })
+    
+    # Memory Analysis
+    heap_used = data["memory"].get("heap_used_mb", 0)
+    heap_committed = data["memory"].get("heap_committed_mb", 1)
+    if heap_committed > 0:
+        usage_pct = (heap_used / heap_committed) * 100
+        severity = _get_heap_severity(usage_pct)
+        if severity:
+            alerts.append({
+                "severity": severity,
+                "title": f"High Memory Usage ({usage_pct:.1f}%)",
+                "description": f"Heap: {heap_used:.1f}MB / {heap_committed:.1f}MB ({usage_pct:.1f}%)",
+                "recommendation": "Increase allocated RAM or reduce memory usage (fewer entities, smaller view distance).",
+            })
+    
+    # Mod Count Warning
+    mod_count = len(data.get("mods", {}))
+    if mod_count > 100:
+        alerts.append({
+            "severity": "MEDIUM",
+            "title": f"Large Modpack ({mod_count} mods)",
+            "description": f"{mod_count} mods detected",
+            "recommendation": "Large modpacks can cause performance issues. Consider removing unused mods.",
+        })
+    
+    return alerts
+
+
+def _get_tps_severity(tps: float) -> str | None:
+    """Get severity level for TPS (lower is worse)."""
+    if tps <= SEVERITY_THRESHOLDS["tps"]["CRITICAL"]:
+        return "CRITICAL"
+    elif tps <= SEVERITY_THRESHOLDS["tps"]["HIGH"]:
+        return "HIGH"
+    elif tps <= SEVERITY_THRESHOLDS["tps"]["MEDIUM"]:
+        return "MEDIUM"
     return None
 
 
-def _flatten_call_tree(
-    node: dict[str, Any], parent_source: tuple[str, str] | None = None
-) -> list[dict[str, Any]]:
-    """Recursively flatten the Spark call tree into analyzable records.
-    
-    Args:
-        node: A node from the Spark profiler call tree
-        parent_source: Optional tuple of (source_type, source_name) from parent
-        
-    Returns:
-        List of flattened records with source information
-    """
-    records = []
-    
-    # Get method name
-    method = node.get("name", "")
-    
-    # Extract source information
-    source_type, source_name, clean_method = _extract_source_from_method(method)
-    
-    # If no source found in this node, inherit from parent
-    if source_type == "vanilla" and parent_source:
-        source_type, source_name = parent_source
-    
-    # Create record for this node
-    # Handle cases where totalTime or times might be arrays/lists (some Spark formats)
-    total_time_raw = node.get("totalTime", 0.0)
-    times_raw = node.get("times", 0)
-    
-    # If they're lists, take the first element or sum them
-    if isinstance(total_time_raw, list):
-        total_time = sum(total_time_raw) if total_time_raw else 0.0
-    else:
-        total_time = float(total_time_raw) if total_time_raw else 0.0
-    
-    if isinstance(times_raw, list):
-        times = sum(times_raw) if times_raw else 0
-    else:
-        times = int(times_raw) if times_raw else 0
-    
-    record = {
-        "method": clean_method,
-        "full_method": method,
-        "source_type": source_type,
-        "source_name": source_name,
-        "self_time": total_time,
-        "total_time": total_time,
-        "sample_count": times,
-    }
-    records.append(record)
-    
-    # Process children
-    children = node.get("children", [])
-    for child in children:
-        child_records = _flatten_call_tree(child, (source_type, source_name))
-        records.extend(child_records)
-    
-    return records
+def _get_mspt_severity(mspt: float) -> str | None:
+    """Get severity level for MSPT (higher is worse)."""
+    if mspt >= SEVERITY_THRESHOLDS["mspt"]["CRITICAL"]:
+        return "CRITICAL"
+    elif mspt >= SEVERITY_THRESHOLDS["mspt"]["HIGH"]:
+        return "HIGH"
+    elif mspt >= SEVERITY_THRESHOLDS["mspt"]["MEDIUM"]:
+        return "MEDIUM"
+    return None
 
 
-def _aggregate_by_source(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate CPU time by source (plugin/mod/vanilla)."""
-    source_map: dict[tuple[str, str], dict[str, Any]] = {}
-    
-    for record in records:
-        key = (record["source_type"], record["source_name"])
-        
-        if key not in source_map:
-            source_map[key] = {
-                "type": record["source_type"],
-                "name": record["source_name"],
-                "self_time": 0.0,
-                "total_time": 0.0,
-                "sample_count": 0,
-            }
-        
-        source_map[key]["self_time"] += record["self_time"]
-        source_map[key]["total_time"] += record["total_time"]
-        source_map[key]["sample_count"] += record["sample_count"]
-    
-    # Sort by self_time descending
-    sources = sorted(source_map.values(), key=lambda x: x["self_time"], reverse=True)
-    
-    return sources
+def _get_entity_severity(count: int) -> str | None:
+    """Get severity level for entity count (higher is worse)."""
+    if count >= SEVERITY_THRESHOLDS["entities"]["CRITICAL"]:
+        return "CRITICAL"
+    elif count >= SEVERITY_THRESHOLDS["entities"]["HIGH"]:
+        return "HIGH"
+    elif count >= SEVERITY_THRESHOLDS["entities"]["MEDIUM"]:
+        return "MEDIUM"
+    return None
 
 
-def _detect_blocking_operations(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect main-thread blocking operations."""
-    alerts = []
-    
-    blocking_patterns = [
-        (r"java\.io\.", "File I/O on main thread"),
-        (r"java\.net\.", "Network I/O on main thread"),
-        (r"java\.sql\.|jdbc", "Database operations on main thread"),
-        (r"Files\.(read|write)", "Synchronous file access"),
-        (r"Socket\.(read|write|connect)", "Synchronous socket operations"),
-    ]
-    
-    for record in records:
-        method = record["full_method"]
-        
-        for pattern, description in blocking_patterns:
-            if re.search(pattern, method, re.IGNORECASE):
-                if record["self_time"] >= 1.0:  # Only alert if significant time
-                    alerts.append({
-                        "severity": _get_severity(record["self_time"]),
-                        "title": f"Blocking operation: {description}",
-                        "source_type": record["source_type"],
-                        "source_name": record["source_name"],
-                        "evidence": [f"{record['full_method']}: {record['self_time']:.2f}%"],
-                        "recommendation": (
-                            "Move blocking I/O operations to async tasks or separate threads "
-                            "to prevent server lag"
-                        ),
-                    })
-                break
-    
-    return alerts
-
-
-def _detect_entity_ai_lag(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect entity, AI, and tick overload."""
-    alerts = []
-    
-    entity_patterns = [
-        (r"Entity\.tick|LivingEntity\.tick|Mob\.tick", "Heavy entity ticking"),
-        (r"PathNavigation|pathfinding", "Pathfinding overhead"),
-        (r"goalSelector|Brain\.tick", "AI goal processing"),
-        (r"ai\.behavior|ai\.goal", "AI behavior execution"),
-    ]
-    
-    total_entity_time = 0.0
-    evidence_list = []
-    
-    for record in records:
-        method = record["full_method"]
-        
-        for pattern, _ in entity_patterns:
-            if re.search(pattern, method, re.IGNORECASE):
-                total_entity_time += record["self_time"]
-                if record["self_time"] >= 1.0:
-                    evidence_list.append(f"{record['method']}: {record['self_time']:.2f}%")
-                break
-    
-    if total_entity_time >= SEVERITY_THRESHOLDS["MEDIUM"]:
-        alerts.append({
-            "severity": _get_severity(total_entity_time),
-            "title": "Entity/AI performance impact",
-            "source_type": "vanilla",
-            "source_name": "minecraft",
-            "evidence": evidence_list[:5],  # Limit to top 5
-            "recommendation": (
-                "Reduce mob caps, limit entity-dense farms, disable advanced mob AI "
-                "features, or use mob limiter plugins"
-            ),
-        })
-    
-    return alerts
-
-
-def _detect_tile_entity_lag(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect modded tile/block entity lag."""
-    alerts = []
-    
-    tile_patterns = [
-        r"BlockEntity\.tick",
-        r"TileEntity",
-        r"capability",
-        r"IItemHandler",
-        r"IEnergyStorage",
-    ]
-    
-    # Group by source
-    source_tile_time: dict[tuple[str, str], float] = {}
-    source_evidence: dict[tuple[str, str], list[str]] = {}
-    
-    for record in records:
-        method = record["full_method"]
-        
-        for pattern in tile_patterns:
-            if re.search(pattern, method, re.IGNORECASE):
-                key = (record["source_type"], record["source_name"])
-                source_tile_time[key] = source_tile_time.get(key, 0.0) + record["self_time"]
-                
-                if key not in source_evidence:
-                    source_evidence[key] = []
-                if record["self_time"] >= 0.5:
-                    source_evidence[key].append(f"{record['method']}: {record['self_time']:.2f}%")
-                break
-    
-    # Create alerts for significant sources
-    for (source_type, source_name), time_pct in source_tile_time.items():
-        if time_pct >= SEVERITY_THRESHOLDS["MEDIUM"]:
-            # Check for known mod
-            mod_info = _match_known_mod(source_name) if source_type == "mod" else None
-            
-            title = f"Block entity lag from {source_name}"
-            recommendation = (
-                "Reduce block entity count, consolidate machines, or optimize chunk loading"
-            )
-            
-            if mod_info:
-                title = f"Block entity lag: {mod_info['issues'][0]}"
-                recommendation = mod_info["recommendations"]
-            
-            alerts.append({
-                "severity": _get_severity(time_pct),
-                "title": title,
-                "source_type": source_type,
-                "source_name": source_name,
-                "evidence": source_evidence[(source_type, source_name)][:5],
-                "recommendation": recommendation,
-            })
-    
-    return alerts
-
-
-def _detect_redstone_lag(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect redstone and mechanical lag."""
-    alerts = []
-    
-    redstone_patterns = [
-        r"piston",
-        r"observer",
-        r"redstone",
-        r"RedstoneTorch",
-        r"mechanical",
-    ]
-    
-    total_redstone_time = 0.0
-    evidence_list = []
-    
-    for record in records:
-        method = record["full_method"]
-        
-        for pattern in redstone_patterns:
-            if re.search(pattern, method, re.IGNORECASE):
-                total_redstone_time += record["self_time"]
-                if record["self_time"] >= 0.5:
-                    evidence_list.append(f"{record['method']}: {record['self_time']:.2f}%")
-                break
-    
-    if total_redstone_time >= SEVERITY_THRESHOLDS["MEDIUM"]:
-        alerts.append({
-            "severity": _get_severity(total_redstone_time),
-            "title": "Redstone/mechanical contraption lag",
-            "source_type": "vanilla",
-            "source_name": "minecraft",
-            "evidence": evidence_list[:5],
-            "recommendation": (
-                "Simplify redstone circuits, reduce observer usage, limit piston "
-                "contraptions, or use Create mod optimizations"
-            ),
-        })
-    
-    return alerts
-
-
-def _detect_scheduler_abuse(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect scheduler and task abuse."""
-    alerts = []
-    
-    scheduler_patterns = [
-        r"BukkitRunnable",
-        r"BukkitScheduler",
-        r"TickEvent",
-        r"ServerTickEvent",
-        r"repeatingTask",
-    ]
-    
-    # Group by source
-    source_scheduler_time: dict[tuple[str, str], float] = {}
-    source_evidence: dict[tuple[str, str], list[str]] = {}
-    
-    for record in records:
-        method = record["full_method"]
-        
-        for pattern in scheduler_patterns:
-            if re.search(pattern, method, re.IGNORECASE):
-                key = (record["source_type"], record["source_name"])
-                source_scheduler_time[key] = (
-                    source_scheduler_time.get(key, 0.0) + record["self_time"]
-                )
-                
-                if key not in source_evidence:
-                    source_evidence[key] = []
-                if record["self_time"] >= 0.5:
-                    source_evidence[key].append(f"{record['method']}: {record['self_time']:.2f}%")
-                break
-    
-    # Create alerts for significant sources
-    for (source_type, source_name), time_pct in source_scheduler_time.items():
-        if time_pct >= SEVERITY_THRESHOLDS["HIGH"]:
-            alerts.append({
-                "severity": _get_severity(time_pct),
-                "title": f"Excessive scheduler/task usage by {source_name}",
-                "source_type": source_type,
-                "source_name": source_name,
-                "evidence": source_evidence[(source_type, source_name)][:5],
-                "recommendation": (
-                    "Review repeating tasks, increase task intervals, or batch operations "
-                    "to reduce tick overhead"
-                ),
-            })
-    
-    return alerts
-
-
-def _detect_gc_pressure(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect GC and allocation pressure."""
-    alerts = []
-    
-    gc_patterns = [
-        r"ArrayList\.grow",
-        r"HashMap\.resize",
-        r"ByteBuffer\.allocate",
-        r"Unsafe\.allocate",
-        r"\[\]\.clone",
-        r"StringBuilder\.append",
-    ]
-    
-    total_allocation_time = 0.0
-    evidence_list = []
-    
-    for record in records:
-        method = record["full_method"]
-        
-        for pattern in gc_patterns:
-            if re.search(pattern, method, re.IGNORECASE):
-                total_allocation_time += record["self_time"]
-                if record["self_time"] >= 0.5:
-                    evidence_list.append(f"{record['method']}: {record['self_time']:.2f}%")
-                break
-    
-    if total_allocation_time >= SEVERITY_THRESHOLDS["HIGH"]:
-        alerts.append({
-            "severity": _get_severity(total_allocation_time),
-            "title": "High allocation/memory pressure",
-            "source_type": "vanilla",
-            "source_name": "minecraft",
-            "evidence": evidence_list[:5],
-            "recommendation": (
-                "Investigate object pooling, reduce collection resizing, or increase "
-                "initial capacity of frequently-grown collections"
-            ),
-        })
-    
-    return alerts
-
-
-def _detect_source_cpu_overuse(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect individual sources consuming excessive CPU."""
-    alerts = []
-    
-    # Report top 5 sources
-    for source in sources[:5]:
-        severity = _get_severity(source["self_time"])
-        
-        # Skip if not at least MEDIUM
-        if source["self_time"] < SEVERITY_THRESHOLDS["MEDIUM"]:
-            continue
-        
-        # Check for known mod
-        mod_info = None
-        if source["type"] == "mod":
-            mod_info = _match_known_mod(source["name"])
-        
-        title = f"High CPU usage: {source['name']}"
-        recommendation = f"Investigate {source['name']} configuration and reduce its workload"
-        
-        if mod_info:
-            title = f"High CPU: {source['name']} ({', '.join(mod_info['issues'][:2])})"
-            recommendation = mod_info["recommendations"]
-        
-        alerts.append({
-            "severity": severity,
-            "title": title,
-            "source_type": source["type"],
-            "source_name": source["name"],
-            "evidence": [f"{source['self_time']:.2f}% total CPU time"],
-            "recommendation": recommendation,
-        })
-    
-    return alerts
+def _get_heap_severity(usage_pct: float) -> str | None:
+    """Get severity level for heap usage percentage (higher is worse)."""
+    if usage_pct >= SEVERITY_THRESHOLDS["heap_usage"]["CRITICAL"]:
+        return "CRITICAL"
+    elif usage_pct >= SEVERITY_THRESHOLDS["heap_usage"]["HIGH"]:
+        return "HIGH"
+    elif usage_pct >= SEVERITY_THRESHOLDS["heap_usage"]["MEDIUM"]:
+        return "MEDIUM"
+    return None
 
 
 async def analyze_spark_report(url: str) -> dict[str, Any]:
-    """Analyze a Spark profiler report URL.
+    """Analyze a Spark profiler report from a URL.
     
     Args:
-        url: Spark profiler report URL (e.g., https://spark.lucko.me/...)
+        url: The Spark report URL (will auto-add ?raw=1 if needed)
         
     Returns:
-        Dictionary containing analysis results suitable for Discord reporting.
+        Dictionary containing analysis results
         
     Raises:
-        ValueError: If URL is invalid or report cannot be fetched
+        ValueError: If the URL is invalid or report type is unsupported
+        aiohttp.ClientError: If there's a network error
     """
     # Validate URL
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        raise ValueError("Invalid URL provided")
-
-    # Construct raw full JSON URL for Lucko
-    if "spark.lucko.me" in parsed.netloc or "sparkprofile" in url:
-        path_parts = parsed.path.strip("/").split("/")
-        if len(path_parts) > 0 and path_parts[-1]:
-            report_id = path_parts[-1]
-            json_url = f"https://spark.lucko.me/{report_id}?raw=1&full=true"
-        else:
-            raise ValueError("Cannot extract report ID from URL")
-    else:
-        json_url = url
-
-    # Fetch the report JSON
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(json_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                if response.status != 200:
-                    raise ValueError(f"Failed to fetch report: HTTP {response.status}")
-                data = await response.json()
-    except Exception as e:
-        raise ValueError(f"Failed to fetch or parse report JSON: {e}") from e
-
-    if not data:
-        raise ValueError("Empty report data")
-
-    # Spark reports should have a threads section
-    if "threads" not in data:
-        raise ValueError(
-            "Invalid Spark report: missing 'threads' data. The report may be incomplete."
-        )
-
-    # Extract platform info
-    metadata = data.get("metadata", {})
+    if not _validate_spark_url(url):
+        raise ValueError(f"Invalid Spark URL: {url}")
     
-    # Platform info might be nested or at top level
-    platform_info = metadata.get("platform", {})
-    if not platform_info and "platform" in data:
-        platform_info = data["platform"]
+    # Ensure ?raw=1 parameter
+    raw_url = _ensure_raw_url(url)
     
-    platform_name = platform_info.get("name", metadata.get("platformName", "Unknown"))
-    platform_version = platform_info.get("version", metadata.get("platformVersion", "Unknown"))
-    mc_version = platform_info.get("minecraftVersion", metadata.get("minecraftVersion", "Unknown"))
-    
-    # Duration might be in metadata or calculated from timestamps
-    duration_sec = metadata.get("duration", 0.0)
-    if duration_sec == 0:
-        start_time = metadata.get("startTime", 0)
-        end_time = metadata.get("endTime", 0)
-        if end_time and start_time:
-            duration_sec = (end_time - start_time) / 1000.0
-    
-    sampler_mode = metadata.get("samplerMode", "cpu")
-
-    summary = {
-        "platform": f"{platform_name} {platform_version}",
-        "mc_version": mc_version,
-        "duration": duration_sec,
-        "sampler": sampler_mode,
-    }
-
-    # Parse profiler data - Spark uses 'threads' array with call trees
-    all_records = []
-    threads = data.get("threads", [])
-    
-    if not threads:
-        raise ValueError(
-            "No profiler data found in report. "
-            "The report may be incomplete or use an unsupported format."
-        )
-    
-    # Calculate total time across all threads for percentage calculation
-    total_root_time = 0.0
-    for thread in threads:
-        # Get total time from this thread's root
-        thread_time_raw = thread.get("totalTime", 0.0)
-        if isinstance(thread_time_raw, list):
-            thread_time = sum(thread_time_raw) if thread_time_raw else 0.0
-        else:
-            thread_time = float(thread_time_raw) if thread_time_raw else 0.0
-        total_root_time += thread_time
-    
-    if total_root_time == 0:
-        raise ValueError("No profiler data with valid timing found in report")
-    
-    # Process each thread
-    for thread in threads:
-        thread_name = thread.get("name", "Unknown Thread")
-        
-        # Get children (call tree nodes)
-        children = thread.get("children", [])
-        
-        # Process each root-level call in this thread
-        for child in children:
-            # Flatten the call tree recursively
-            thread_records = _flatten_call_tree(child)
+    # Fetch JSON
+    async with aiohttp.ClientSession() as session:
+        async with session.get(raw_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status != 200:
+                raise ValueError(f"HTTP {resp.status}: {resp.reason}")
             
-            # Convert absolute times to percentages
-            for record in thread_records:
-                # Calculate percentage of total execution time
-                if total_root_time > 0:
-                    record["self_time"] = (record["self_time"] / total_root_time) * 100.0
-                    record["total_time"] = (record["total_time"] / total_root_time) * 100.0
-                else:
-                    record["self_time"] = 0.0
-                    record["total_time"] = 0.0
-                
-                record["thread"] = thread_name
-            
-            all_records.extend(thread_records)
+            raw_json = await resp.json()
     
-    if not all_records:
-        raise ValueError("No call tree records found in profiler data")
-
-    # Aggregate by source
-    top_sources = _aggregate_by_source(all_records)
-
-    # Run detection rules
-    alerts = []
-    alerts.extend(_detect_source_cpu_overuse(top_sources))
-    alerts.extend(_detect_blocking_operations(all_records))
-    alerts.extend(_detect_entity_ai_lag(all_records))
-    alerts.extend(_detect_tile_entity_lag(all_records))
-    alerts.extend(_detect_redstone_lag(all_records))
-    alerts.extend(_detect_scheduler_abuse(all_records))
-    alerts.extend(_detect_gc_pressure(all_records))
-
-    # Sort alerts by severity
-    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    alerts.sort(key=lambda a: severity_order.get(a["severity"], 999))
-
+    # Validate report type
+    report_type = raw_json.get("type", "")
+    if report_type != "sampler":
+        raise ValueError(f"Invalid report type: expected 'sampler', got '{report_type}'")
+    
+    # Parse the JSON
+    parsed_data = _parse_spark_json(raw_json)
+    
+    # Analyze for issues
+    alerts = _analyze_performance(parsed_data)
+    
+    # Return structured result
     return {
-        "summary": summary,
-        "top_sources": top_sources[:10],  # top 10 sources
+        "summary": parsed_data,
         "alerts": alerts,
     }
 
 
-
 def format_discord_report(result: dict[str, Any]) -> str:
-    """Format analysis results as a Discord-ready message.
+    """Format the analysis result for Discord output.
     
     Args:
-        result: Analysis result dictionary from analyze_spark_report()
+        result: The result from analyze_spark_report()
         
     Returns:
-        Formatted string suitable for Discord (under 2000 characters)
+        Formatted string ready for Discord
     """
-    # Emoji mapping
-    severity_emoji = {
-        "CRITICAL": "🔴",
-        "HIGH": "🟠",
-        "MEDIUM": "🟡",
-        "LOW": "🟢",
-    }
-    
-    type_emoji = {
-        "mod": "⚙️",
-        "plugin": "🔌",
-        "vanilla": "📦",
-    }
-    
     summary = result.get("summary", {})
-    top_sources = result.get("top_sources", [])
     alerts = result.get("alerts", [])
     
-    # Build message
-    lines = []
-    lines.append("**📊 Spark Profile Analysis**")
-    lines.append(f"Platform: {summary.get('platform', 'Unknown')}")
-    lines.append(
-        f"MC: {summary.get('mc_version', 'Unknown')} | "
-        f"Duration: {summary.get('duration', 0):.1f}s"
-    )
-    lines.append("")
+    # Header
+    platform = summary.get("platform", {})
+    run = summary.get("run", {})
     
-    # Top sources
-    if top_sources:
-        lines.append("**Top CPU Consumers:**")
-        for i, source in enumerate(top_sources[:5], 1):
-            emoji = type_emoji.get(source["type"], "")
-            lines.append(f"{i}. {emoji} {source['name']}: {source['self_time']:.1f}%")
-        lines.append("")
+    lines = [
+        "📊 **Spark Profile Analysis**",
+        f"**Platform:** {platform.get('name')} {platform.get('version')}",
+        f"**MC Version:** {platform.get('mc_version')}",
+        f"**Duration:** {run.get('duration_seconds', 0):.1f}s",
+        "",
+    ]
+    
+    # Performance Metrics
+    tps = summary.get("tps", {})
+    mspt = summary.get("mspt", {})
+    
+    lines.append("**Performance:**")
+    tps_1m = tps.get("last_1m")
+    if tps_1m is not None:
+        tps_emoji = "🔴" if tps_1m < 15 else "🟠" if tps_1m < 18 else "🟢"
+        lines.append(f"{tps_emoji} TPS (1m): {tps_1m:.1f}/20.0")
+    
+    if mspt.get("last_1m") and isinstance(mspt["last_1m"], dict):
+        mspt_mean = mspt["last_1m"].get("mean")
+        if mspt_mean is not None:
+            mspt_emoji = "🔴" if mspt_mean > 100 else "🟠" if mspt_mean > 65 else "🟢"
+            lines.append(f"{mspt_emoji} MSPT (1m avg): {mspt_mean:.1f}ms")
+    
+    # Entities
+    entities = summary.get("entities", {})
+    total_ent = entities.get("total")
+    if total_ent is not None:
+        ent_emoji = "🔴" if total_ent > 1500 else "🟠" if total_ent > 1000 else "🟢"
+        lines.append(f"{ent_emoji} Entities: {total_ent}")
+    
+    # Memory
+    memory = summary.get("memory", {})
+    heap_used = memory.get("heap_used_mb", 0)
+    heap_committed = memory.get("heap_committed_mb", 0)
+    if heap_committed > 0:
+        usage_pct = (heap_used / heap_committed) * 100
+        mem_emoji = "🔴" if usage_pct > 90 else "🟠" if usage_pct > 80 else "🟢"
+        lines.append(f"{mem_emoji} Memory: {heap_used:.0f}MB/{heap_committed:.0f}MB ({usage_pct:.0f}%)")
+    
+    # Players
+    players = summary.get("players")
+    if players is not None:
+        lines.append(f"👥 Players: {players}")
+    
+    # Mods
+    mods = summary.get("mods", {})
+    if mods:
+        lines.append(f"⚙️ Mods: {len(mods)}")
+    
+    lines.append("")
     
     # Alerts
     if alerts:
         lines.append("**⚠️ Issues Detected:**")
         
-        # Limit alerts to fit in Discord limit
-        displayed_alerts = 0
-        for alert in alerts[:8]:  # Max 8 alerts
-            severity = alert.get("severity", "LOW")
-            emoji = severity_emoji.get(severity, "")
-            title = alert.get("title", "Unknown issue")
-            
-            # Create compact alert line
-            alert_line = f"{emoji} **{title}**"
-            
-            # Add source if not vanilla
-            if alert.get("source_type") != "vanilla":
-                source_emoji = type_emoji.get(alert["source_type"], "")
-                alert_line += f" ({source_emoji} {alert['source_name']})"
-            
-            lines.append(alert_line)
-            
-            # Add recommendation (truncated if needed)
-            rec = alert.get("recommendation", "")
-            if rec:
-                rec_short = rec[:100] + "..." if len(rec) > 100 else rec
-                lines.append(f"  → {rec_short}")
-            
-            displayed_alerts += 1
+        # Sort by severity
+        severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        sorted_alerts = sorted(alerts, key=lambda x: severity_order.get(x.get("severity", "LOW"), 99))
         
-        if len(alerts) > displayed_alerts:
-            lines.append(f"  ... and {len(alerts) - displayed_alerts} more issues")
+        for alert in sorted_alerts[:5]:  # Limit to top 5 alerts
+            severity = alert.get("severity", "LOW")
+            emoji = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(severity, "⚪")
+            title = alert.get("title", "Unknown issue")
+            lines.append(f"{emoji} **{title}**")
+            
+            # Add recommendation if space allows
+            rec = alert.get("recommendation", "")
+            if rec and len("\n".join(lines)) + len(rec) < 1800:  # Leave room
+                lines.append(f"  💡 {rec}")
+            lines.append("")
     else:
-        lines.append("✅ No significant performance issues detected")
+        lines.append("✅ **No significant issues detected!**")
     
-    # Join and ensure under 2000 chars
     message = "\n".join(lines)
     
+    # Truncate if too long
     if len(message) > 2000:
-        # Truncate and add indicator
-        message = message[:1950] + "\n\n... (truncated)"
+        message = message[:1997] + "..."
     
     return message
