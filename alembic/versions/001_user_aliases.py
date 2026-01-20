@@ -66,11 +66,20 @@ def downgrade() -> None:
     # Restore old unique constraint if it doesn't exist
     # NOTE: This will fail if there are duplicate aliases in the table
     if 'uq_alias' not in constraint_names:
+        from sqlalchemy.exc import IntegrityError
         try:
             op.create_unique_constraint('uq_alias', 'server_alias', ['alias'])
-        except Exception:
-            # If this fails due to duplicate aliases, you'll need to clean up data first
-            pass
+        except IntegrityError as e:
+            # Log the error - cannot restore constraint due to duplicate aliases
+            import structlog
+            log = structlog.get_logger()
+            log.error("downgrade_failed", 
+                     reason="Duplicate aliases exist, cannot restore unique constraint",
+                     error=str(e))
+            raise RuntimeError(
+                "Cannot downgrade: duplicate aliases exist in the table. "
+                "Clean up duplicate aliases before downgrading."
+            ) from e
     
     # Remove created_at column if it exists
     columns = [col['name'] for col in inspector.get_columns('server_alias')]

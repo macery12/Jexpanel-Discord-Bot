@@ -1,12 +1,24 @@
 """Database migration utilities using Alembic."""
 from __future__ import annotations
 
+import os
 import structlog
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 log = structlog.get_logger()
+
+
+def _get_alembic_config() -> Config:
+    """Get Alembic config with proper path handling."""
+    # Get the directory where this module is located
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    # alembic.ini is in the project root, two levels up from bot/db/
+    project_root = os.path.dirname(os.path.dirname(module_dir))
+    alembic_ini_path = os.path.join(project_root, "alembic.ini")
+    
+    return Config(alembic_ini_path)
 
 
 async def run_migrations(engine: AsyncEngine) -> None:
@@ -20,7 +32,7 @@ async def run_migrations(engine: AsyncEngine) -> None:
         engine: The async SQLAlchemy engine
     """
     # Create Alembic config
-    alembic_cfg = Config("alembic.ini")
+    alembic_cfg = _get_alembic_config()
     
     # Run migrations in a sync context (Alembic doesn't support async yet)
     def run_upgrade(connection):
@@ -44,7 +56,7 @@ def create_migration(message: str) -> None:
     Args:
         message: Description of the migration
     """
-    alembic_cfg = Config("alembic.ini")
+    alembic_cfg = _get_alembic_config()
     command.revision(alembic_cfg, message=message, autogenerate=True)
     log.info("migration_created", message=message)
 
