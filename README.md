@@ -60,10 +60,23 @@ docker compose pull && docker compose up -d
 
 - **`/backups <server>`** — List server backups
 
+- **`/players <server>`** — Show online players for a Minecraft server
+
+### Alias Management
+
+User commands (create your own personal aliases):
+- **`/alias <server> <alias>`** — Create a personal alias for easier server access
+- **`/alias_list`** — List all your personal server aliases
+- **`/alias_delete <alias>`** — Delete one of your personal aliases
+
+Admin commands (create global aliases visible to all users):
+- **`/alias_set <uuid> <alias> [panel_url]`** — Set a global alias (admin-only)
+- **`/alias_list_global`** — List all global server aliases (admin-only)
+- **`/alias_delete_global <alias>`** — Delete a global alias (admin-only)
+
 ### User Management
 
 - **`/link <panel_url> <api_key>`** — Link your Pterodactyl API key
-- **`/alias <server> <alias>`** — Create a friendly alias for a server
 
 ---
 
