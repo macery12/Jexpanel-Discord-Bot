@@ -30,6 +30,14 @@ def _aad(discord_user_id: int, panel_url: str, key_version: int = 1) -> bytes:
     return f"{discord_user_id}|{panel_url}|v{key_version}".encode("utf-8")
 
 
+def _aad_legacy(discord_user_id: int, panel_url: str) -> bytes:
+    """
+    Legacy AAD format without key version.
+    Used only for backward compatibility with old encrypted credentials.
+    """
+    return f"{discord_user_id}|{panel_url}".encode("utf-8")
+
+
 def generate_salt() -> bytes:
     """
     Generate a cryptographically secure random salt for key derivation.
@@ -178,7 +186,7 @@ def encrypt_token_legacy(discord_user_id: int, panel_url: str, token: str) -> st
     key = settings.bot_data_key
     aes = AESGCM(key)
     nonce = os.urandom(12)
-    ct = aes.encrypt(nonce, token.encode("utf-8"), _aad(discord_user_id, panel_url))
+    ct = aes.encrypt(nonce, token.encode("utf-8"), _aad_legacy(discord_user_id, panel_url))
     blob = nonce + ct
     return base64.b64encode(blob).decode("utf-8")
 
@@ -189,5 +197,5 @@ def decrypt_token_legacy(discord_user_id: int, panel_url: str, ciphertext_b64: s
     data = base64.b64decode(ciphertext_b64)
     nonce, ct = data[:12], data[12:]
     aes = AESGCM(key)
-    pt = aes.decrypt(nonce, ct, _aad(discord_user_id, panel_url, key_version))
+    pt = aes.decrypt(nonce, ct, _aad_legacy(discord_user_id, panel_url))
     return pt.decode("utf-8")
