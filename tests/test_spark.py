@@ -333,38 +333,33 @@ class TestAnalyzeSparkReport:
     async def test_valid_url_parsing(self):
         """Test URL parsing and conversion to raw JSON."""
         test_data = {
-            "type": "sampler",
             "metadata": {
                 "platform": {
                     "name": "Paper",
                     "version": "1.20.1",
                     "minecraftVersion": "1.20.1",
-                }
-            },
-            "samplerMetadata": {
-                "type": "sampler",
-                "startTime": 1000000,
-                "endTime": 1030000,
+                },
+                "duration": 30.0,
                 "samplerMode": "cpu",
             },
-            "threads": [
-                {
-                    "name": "Server thread",
-                    "rootNode": {
-                        "name": "net.minecraft.server.MinecraftServer.tick",
-                        "totalTime": 100.0,
-                        "times": 1000,
-                        "children": [
+            "sampler": {
+                "threadGroups": {
+                    "Server thread": {
+                        "entries": [
+                            {
+                                "name": "net.minecraft.server.MinecraftServer.tick",
+                                "percent": 100.0,
+                                "samples": 1000
+                            },
                             {
                                 "name": "create@0.5.1::ContraptionEntity.tick",
-                                "totalTime": 15.0,
-                                "times": 300,
-                                "children": []
+                                "percent": 15.0,
+                                "samples": 300
                             }
                         ]
                     }
                 }
-            ]
+            }
         }
         
         async def mock_json():
@@ -429,14 +424,10 @@ class TestAnalyzeSparkReport:
 
     @pytest.mark.asyncio
     async def test_wrong_report_type(self):
-        """Test handling of non-sampler reports."""
+        """Test handling of reports without sampler data."""
         test_data = {
-            "type": "health",  # Wrong type at top level
             "metadata": {},
-            "samplerMetadata": {
-                "type": "health",  # Wrong type
-            },
-            "threads": []
+            # Missing sampler section
         }
         
         async def mock_json():
@@ -462,33 +453,24 @@ class TestAnalyzeSparkReport:
                 return MockContext()
         
         with patch("aiohttp.ClientSession", MockSession):
-            with pytest.raises(ValueError, match="Invalid report type"):
-                await analyze_spark_report("https://spark.lucko.me/health123")
+            with pytest.raises(ValueError, match="Invalid Spark report"):
+                await analyze_spark_report("https://spark.lucko.me/invalid123")
 
     @pytest.mark.asyncio
-    async def test_empty_rootnodes(self):
-        """Test handling of threads with empty rootNodes array."""
+    async def test_empty_threadgroups(self):
+        """Test handling of sampler with empty threadGroups."""
         test_data = {
-            "type": "sampler",
             "metadata": {
                 "platform": {
                     "name": "Forge",
                     "version": "47.4.0",
                     "minecraftVersion": "1.20.1",
-                }
+                },
+                "duration": 30.0,
             },
-            "samplerMetadata": {
-                "type": "sampler",
-                "startTime": 1768855885781,
-                "endTime": 1768862498094,
-                "samplerMode": "cpu",
-            },
-            "threads": [
-                {
-                    "name": "Server thread",
-                    "rootNodes": []  # Empty array should not crash
-                }
-            ]
+            "sampler": {
+                "threadGroups": {}  # Empty thread groups
+            }
         }
         
         async def mock_json():
@@ -514,43 +496,41 @@ class TestAnalyzeSparkReport:
                 return MockContext()
         
         with patch("aiohttp.ClientSession", MockSession):
-            # Should raise "No call tree records found" not crash
-            with pytest.raises(ValueError, match="No call tree records found"):
+            # Should raise error about no sampler data
+            with pytest.raises(ValueError, match="No sampler data found"):
                 await analyze_spark_report("https://spark.lucko.me/empty")
 
     @pytest.mark.asyncio
-    async def test_thread_as_root_node(self):
-        """Test handling of threads where the thread itself is the root node."""
+    async def test_threadgroups_parsing(self):
+        """Test parsing of Spark threadGroups format."""
         test_data = {
-            "type": "sampler",
             "metadata": {
                 "platform": {
                     "name": "Forge",
                     "version": "47.4.0",
                     "minecraftVersion": "1.20.1",
-                }
-            },
-            "samplerMetadata": {
-                "type": "sampler",
-                "startTime": 1768855885781,
-                "endTime": 1768862498094,
+                },
+                "duration": 60.0,
                 "samplerMode": "cpu",
             },
-            "threads": [
-                {
-                    "name": "Server thread",
-                    "times": 5000,
-                    "totalTime": 100000,
-                    "children": [
-                        {
-                            "name": "net.minecraft.server.MinecraftServer.tick",
-                            "totalTime": 50.0,
-                            "times": 2500,
-                            "children": []
-                        }
-                    ]
+            "sampler": {
+                "threadGroups": {
+                    "Server thread": {
+                        "entries": [
+                            {
+                                "name": "net.minecraft.server.MinecraftServer.tick",
+                                "percent": 50.0,
+                                "samples": 2500
+                            },
+                            {
+                                "name": "create@0.5.1::ContraptionEntity.tick",
+                                "percent": 20.0,
+                                "samples": 1000
+                            }
+                        ]
+                    }
                 }
-            ]
+            }
         }
         
         async def mock_json():
@@ -576,49 +556,49 @@ class TestAnalyzeSparkReport:
                 return MockContext()
         
         with patch("aiohttp.ClientSession", MockSession):
-            result = await analyze_spark_report("https://spark.lucko.me/forge123")
+            result = await analyze_spark_report("https://spark.lucko.me/test")
             
-            # Should successfully parse when thread itself is the root
+            # Should successfully parse threadGroups
             assert "summary" in result
             assert "top_sources" in result
             assert len(result["top_sources"]) > 0
+            # Should have detected create mod
+            assert any(s["name"] == "create" for s in result["top_sources"])
 
     @pytest.mark.asyncio
-    async def test_array_values_in_nodes(self):
-        """Test handling of nodes where times/totalTime are arrays instead of scalars."""
+    async def test_multiple_threadgroups(self):
+        """Test handling of multiple thread groups."""
         test_data = {
-            "type": "sampler",
             "metadata": {
                 "platform": {
                     "name": "Paper",
                     "version": "1.20.1",
                     "minecraftVersion": "1.20.1",
-                }
+                },
+                "duration": 30.0,
             },
-            "samplerMetadata": {
-                "type": "sampler",
-                "startTime": 1000000,
-                "endTime": 1030000,
-                "samplerMode": "cpu",
-            },
-            "threads": [
-                {
-                    "name": "Server thread",
-                    "rootNode": {
-                        "name": "net.minecraft.server.MinecraftServer.tick",
-                        "totalTime": [100.0],  # Array instead of scalar
-                        "times": [1000],  # Array instead of scalar
-                        "children": [
+            "sampler": {
+                "threadGroups": {
+                    "Server thread": {
+                        "entries": [
                             {
-                                "name": "test.method",
-                                "totalTime": [50.0, 25.0],  # Multiple values
-                                "times": [500, 250],
-                                "children": []
+                                "name": "net.minecraft.server.level.ServerLevel.tick",
+                                "percent": 45.0,
+                                "samples": 2250
+                            }
+                        ]
+                    },
+                    "Async Chat Thread": {
+                        "entries": [
+                            {
+                                "name": "io.papermc.paper.chat.ChatProcessor.process",
+                                "percent": 5.0,
+                                "samples": 250
                             }
                         ]
                     }
                 }
-            ]
+            }
         }
         
         async def mock_json():

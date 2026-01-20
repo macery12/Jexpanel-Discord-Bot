@@ -551,28 +551,31 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     if not data:
         raise ValueError("Empty report data")
 
-    # Determine sampler type
-    sampler_type = data.get("type")  # top-level
-    if not sampler_type and "samplerMetadata" in data:
-        sampler_type = data["samplerMetadata"].get("type", "")
-
-    if sampler_type != "sampler":
-        raise ValueError(f"Invalid report type: expected 'sampler', got '{sampler_type}'")
+    # Spark reports should have a sampler section
+    if "sampler" not in data and "threads" not in data:
+        raise ValueError("Invalid Spark report: missing sampler data")
 
     # Extract platform info
     metadata = data.get("metadata", {})
+    
+    # Platform info might be nested or at top level
     platform_info = metadata.get("platform", {})
-    platform_name = platform_info.get("name", "Unknown")
-    platform_version = platform_info.get("version", "Unknown")
-    mc_version = platform_info.get("minecraftVersion", "Unknown")
-
-    # Extract sampler info
-    sampler_metadata = data.get("samplerMetadata", {})
-    start_time = sampler_metadata.get("startTime", 0)
-    end_time = sampler_metadata.get("endTime", 0)
-    # If endTime missing, fallback to duration 0
-    duration_sec = ((end_time - start_time) / 1000.0) if (end_time and start_time) else 0.0
-    sampler_mode = sampler_metadata.get("samplerMode", "cpu")
+    if not platform_info and "platform" in data:
+        platform_info = data["platform"]
+    
+    platform_name = platform_info.get("name", metadata.get("platformName", "Unknown"))
+    platform_version = platform_info.get("version", metadata.get("platformVersion", "Unknown"))
+    mc_version = platform_info.get("minecraftVersion", metadata.get("minecraftVersion", "Unknown"))
+    
+    # Duration might be in metadata or calculated from timestamps
+    duration_sec = metadata.get("duration", 0.0)
+    if duration_sec == 0:
+        start_time = metadata.get("startTime", 0)
+        end_time = metadata.get("endTime", 0)
+        if end_time and start_time:
+            duration_sec = (end_time - start_time) / 1000.0
+    
+    sampler_mode = metadata.get("samplerMode", "cpu")
 
     summary = {
         "platform": f"{platform_name} {platform_version}",
@@ -581,76 +584,48 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
         "sampler": sampler_mode,
     }
 
-    # Parse threads
-    threads = data.get("threads", [])
+    # Parse sampler data - Spark uses threadGroups with pre-calculated percentages
     all_records = []
-
-    def get_thread_roots(thread: dict) -> list[dict]:
-        """Extract root nodes from thread, handling both rootNodes and rootNode."""
-        # Check rootNodes first (plural, used in full JSON format)
-        if "rootNodes" in thread:
-            nodes = thread["rootNodes"]
-            if nodes is not None:
-                return nodes if isinstance(nodes, list) else [nodes]
-        # Fallback to rootNode (singular, used in basic format)
-        if "rootNode" in thread:
-            node = thread["rootNode"]
-            if node is not None:
-                return [node]
-        # Some Spark formats: thread itself might be the root node
-        # Check if thread has the fields that would make it a valid node
-        if "children" in thread and "times" in thread:
-            # Thread is structured as a call tree node itself
-            return [thread]
-        return []
-
-    for thread in threads:
-        # Check server/main thread first
-        thread_name = thread.get("name", "").lower()
-        if "server" in thread_name or "main" in thread_name:
-            roots = get_thread_roots(thread)
-            for root in roots:
-                records = _flatten_call_tree(root)
-                all_records.extend(records)
-
-    # If still empty, fallback to all threads
-    if not all_records:
-        for thread in threads:
-            roots = get_thread_roots(thread)
-            for root in roots:
-                records = _flatten_call_tree(root)
-                all_records.extend(records)
-
-    if not all_records:
-        # Provide helpful debugging info
-        if not threads:
-            raise ValueError("No threads found in report")
+    sampler = data.get("sampler", {})
+    thread_groups = sampler.get("threadGroups", {})
+    
+    if not thread_groups:
+        # Fallback: check if data has old format with threads array
+        threads = data.get("threads", [])
+        if threads:
+            raise ValueError(
+                "Legacy Spark format detected. Please use a current Spark report. "
+                "Spark reports should have 'sampler.threadGroups' structure."
+            )
+        raise ValueError("No sampler data found in report")
+    
+    # Process each thread group
+    for thread_name, thread_data in thread_groups.items():
+        entries = thread_data.get("entries", [])
         
-        # Check what fields the threads actually have
-        thread_info = []
-        for i, thread in enumerate(threads[:3]):  # Check first 3 threads
-            thread_keys = list(thread.keys())
-            thread_info.append(f"Thread {i} ({thread.get('name', 'unnamed')}): {thread_keys}")
-        
-        debug_msg = "No call tree records found in report. " + "; ".join(thread_info)
-        raise ValueError(debug_msg)
-
-    # Calculate total time from the first record (usually the root)
-    # In Spark, the first record is typically the root with total profiling time
-    total_time = all_records[0]["total_time"] if all_records else 1.0
+        for entry in entries:
+            # Spark entries already have percentages calculated
+            method_name = entry.get("name", "")
+            percent = entry.get("percent", 0.0)
+            samples = entry.get("samples", 0)
+            
+            # Extract source from method name
+            source_type, source_name, clean_method = _extract_source_from_method(method_name)
+            
+            record = {
+                "method": clean_method,
+                "full_method": method_name,
+                "source_type": source_type,
+                "source_name": source_name,
+                "self_time": percent,  # Already a percentage
+                "total_time": percent,  # Already a percentage
+                "sample_count": samples,
+                "thread": thread_name,
+            }
+            all_records.append(record)
     
-    # If total_time is still 0, use sum of all top-level times
-    if total_time == 0:
-        total_time = sum(r["total_time"] for r in all_records)
-    
-    # Avoid division by zero
-    if total_time == 0:
-        total_time = 1.0
-    
-    # Convert absolute times to percentages relative to total profiling time
-    for record in all_records:
-        record["self_time"] = (record["self_time"] / total_time) * 100.0
-        record["total_time"] = (record["total_time"] / total_time) * 100.0
+    if not all_records:
+        raise ValueError("No profiler entries found in sampler data")
 
     # Aggregate by source
     top_sources = _aggregate_by_source(all_records)
