@@ -655,10 +655,9 @@ class ServerCog(commands.Cog):
             ]
 
             # Add player list if available
-            if status.players.sample and len(status.players.sample) > 0:
+            if status.players.sample:
                 player_names = [p.name for p in status.players.sample]
-                msg_parts.append("\n\n**Players:**")
-                msg_parts.append(", ".join(player_names))
+                msg_parts.append(f"\n\n**Players:** {', '.join(player_names)}")
 
             msg = "".join(msg_parts)
             await inter.followup.send(msg, ephemeral=False)
