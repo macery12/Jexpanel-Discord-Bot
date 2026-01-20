@@ -80,6 +80,14 @@ Admin commands (create global aliases visible to all users):
 
 ---
 
+## Database Migrations
+
+This bot uses **Alembic** for automatic database migrations. The database schema is automatically upgraded when the bot starts, so you don't need to do anything manually.
+
+For developers making schema changes, see [alembic/README.md](alembic/README.md) for instructions on creating new migrations.
+
+---
+
 ## Discord setup checklist
 
 1. Create an application + bot in **Discord Developer Portal**.

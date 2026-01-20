@@ -11,6 +11,7 @@ asyncpg>=0.29
 # Data & crypto
 SQLAlchemy>=2.0.30
 aiosqlite>=0.20.0
+alembic>=1.13.0
 cryptography>=42.0.5
 
 # Minecraft server status
