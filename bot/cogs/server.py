@@ -653,7 +653,7 @@ class ServerCog(commands.Cog):
                 query = await mc_server.async_query()
                 player_count = query.players.online
                 max_players = query.players.max
-                player_list = query.players.names if query.players.names else None
+                player_list = query.players.names
             except Exception:
                 # Fallback to status protocol if query is not enabled
                 status = await mc_server.async_status()
@@ -669,7 +669,7 @@ class ServerCog(commands.Cog):
             ]
 
             # Add player list if available (vertical list format)
-            if player_list and len(player_list) > 0:
+            if player_list:
                 msg_parts.append("\n\n**Players:**")
                 for player_name in player_list:
                     msg_parts.append(f"\n• {player_name}")
