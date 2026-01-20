@@ -10,5 +10,9 @@ engine = create_async_engine(settings.database_url, future=True, echo=False)
 SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Initialize the database with automatic migrations."""
+    from .migrations import run_migrations
+    
+    # Run Alembic migrations to ensure schema is up-to-date
+    await run_migrations(engine)
+
