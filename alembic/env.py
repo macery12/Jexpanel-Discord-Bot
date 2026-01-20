@@ -1,7 +1,7 @@
 """Alembic environment configuration for automatic migrations."""
 from logging.config import fileConfig
 
-from sqlalchemy import pool
+from sqlalchemy import create_engine, pool
 from sqlalchemy.engine import Connection
 
 from alembic import context
@@ -73,18 +73,15 @@ def do_run_migrations(connection: Connection) -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
     
-    This is only called when running alembic from the command line.
-    When running from the bot, we use do_run_migrations() directly.
+    Handles both programmatic mode (when called from the bot with an existing
+    connection) and command-line mode (when using alembic CLI commands).
     """
     # Check if we have a connection passed from bot/db/migrations.py
     if 'connection' in config.attributes:
-        # Use the existing connection (programmatic mode)
+        # Use the existing connection (programmatic mode from bot startup)
         do_run_migrations(config.attributes['connection'])
     else:
-        # Command-line mode - need to create engine
-        # This path is only for manual alembic commands
-        from sqlalchemy import create_engine
-        
+        # Command-line mode - need to create engine for manual alembic commands
         connectable = create_engine(
             config.get_main_option("sqlalchemy.url"),
             poolclass=pool.NullPool,
