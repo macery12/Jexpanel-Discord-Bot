@@ -25,6 +25,9 @@ class ServerAlias(Base):
     discord_user_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (
+        # Unique constraint for user-specific aliases (alias + user_id must be unique)
+        # For global aliases (discord_user_id IS NULL), we want alias to be globally unique
+        # This is handled in the service layer since SQL unique constraints treat NULL specially
         UniqueConstraint("alias", "discord_user_id", name="uq_alias_user"),
     )
 

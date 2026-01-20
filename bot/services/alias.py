@@ -99,11 +99,20 @@ async def create_or_update_alias(
         The created or updated ServerAlias record
     """
     # Check if alias exists for this user/global
-    res = await session.execute(
-        select(ServerAlias).where(
-            and_(ServerAlias.alias == alias, ServerAlias.discord_user_id == user_id)
+    if user_id is None:
+        # For global aliases, check by alias and NULL user_id
+        res = await session.execute(
+            select(ServerAlias).where(
+                and_(ServerAlias.alias == alias, ServerAlias.discord_user_id.is_(None))
+            )
         )
-    )
+    else:
+        # For user aliases, check by alias and user_id
+        res = await session.execute(
+            select(ServerAlias).where(
+                and_(ServerAlias.alias == alias, ServerAlias.discord_user_id == user_id)
+            )
+        )
     existing = res.scalar_one_or_none()
     
     if existing:
@@ -137,11 +146,20 @@ async def delete_alias(
     Returns:
         True if deleted, False if not found
     """
-    res = await session.execute(
-        select(ServerAlias).where(
-            and_(ServerAlias.alias == alias, ServerAlias.discord_user_id == user_id)
+    if user_id is None:
+        # For global aliases, check by alias and NULL user_id
+        res = await session.execute(
+            select(ServerAlias).where(
+                and_(ServerAlias.alias == alias, ServerAlias.discord_user_id.is_(None))
+            )
         )
-    )
+    else:
+        # For user aliases, check by alias and user_id
+        res = await session.execute(
+            select(ServerAlias).where(
+                and_(ServerAlias.alias == alias, ServerAlias.discord_user_id == user_id)
+            )
+        )
     alias_obj = res.scalar_one_or_none()
     
     if alias_obj:
