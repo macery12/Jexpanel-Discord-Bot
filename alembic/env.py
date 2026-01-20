@@ -3,7 +3,6 @@ from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
@@ -55,6 +54,11 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    """Run migrations using an existing connection.
+    
+    This is used when migrations are run programmatically from the bot,
+    which already has an async engine and connection.
+    """
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -66,27 +70,28 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-async def run_async_migrations() -> None:
-    """In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
-
-
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    import asyncio
-    asyncio.run(run_async_migrations())
+    """Run migrations in 'online' mode.
+    
+    This is only called when running alembic from the command line.
+    When running from the bot, we use do_run_migrations() directly.
+    """
+    # Check if we have a connection passed from bot/db/migrations.py
+    if 'connection' in config.attributes:
+        # Use the existing connection (programmatic mode)
+        do_run_migrations(config.attributes['connection'])
+    else:
+        # Command-line mode - need to create engine
+        # This path is only for manual alembic commands
+        from sqlalchemy import create_engine
+        
+        connectable = create_engine(
+            config.get_main_option("sqlalchemy.url"),
+            poolclass=pool.NullPool,
+        )
+
+        with connectable.connect() as connection:
+            do_run_migrations(connection)
 
 
 if context.is_offline_mode():
