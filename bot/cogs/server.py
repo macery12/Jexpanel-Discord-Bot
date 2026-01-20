@@ -103,7 +103,35 @@ async def get_user_token_for_panel(user_id: int, panel_url: str) -> str | None:
 
 
 async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | None, str | None]:
+    """
+    Resolve a server identifier (alias, UUID, or name) to a UUID and panel URL.
+    
+    Resolution order:
+    1. Check if it's an alias (user-specific, then global)
+    2. Check if it's a full UUID
+    3. Search by partial UUID or server name across all user's panels
+    
+    Args:
+        user_id: Discord user ID
+        value: Server identifier (alias, UUID, or name)
+    
+    Returns:
+        Tuple of (uuid, panel_url) or (None, None) if not found
+    """
     val = value.strip()
+    
+    # Step 1: Check if it's an alias (user-specific first, then global)
+    async with SessionLocal() as s:
+        from ..services.alias import get_alias
+        alias = await get_alias(s, val, user_id)
+        if alias:
+            if alias.panel_url:
+                return (alias.uuid, alias.panel_url)
+            uuid_from_alias = alias.uuid
+        else:
+            uuid_from_alias = None
+    
+    # Step 2: Check if it's a full UUID
     if SERVER_UUID_RE.match(val):
         panels = await list_user_panels(user_id)
         if not panels:
@@ -125,16 +153,7 @@ async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | 
                     continue
         return (val, None)
 
-    async with SessionLocal() as s:
-        res = await s.execute(select(ServerAlias).where(ServerAlias.alias == val))
-        alias = res.scalar_one_or_none()
-        if alias:
-            if alias.panel_url:
-                return (alias.uuid, alias.panel_url)
-            uuid_guess = alias.uuid
-        else:
-            uuid_guess = None
-
+    # Step 3: Search by partial UUID or server name, or use UUID from alias
     panels = await list_user_panels(user_id)
     if not panels:
         return (None, None)
@@ -150,8 +169,10 @@ async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[str | 
                 servers = await cli.list_servers()
                 needle = val.lower()
                 for srv in servers:
-                    if uuid_guess and srv.get("uuid") == uuid_guess:
+                    # If we have a UUID from alias, prioritize exact match
+                    if uuid_from_alias and srv.get("uuid") == uuid_from_alias:
                         return (srv["uuid"], p)
+                    # Otherwise search by partial UUID or name
                     uuid = srv.get("uuid", "")
                     name = srv.get("name", "")
                     if uuid.startswith(val) or needle in name.lower():
@@ -698,6 +719,106 @@ class ServerCog(commands.Cog):
                 )
                 await inter.followup.send(msg, ephemeral=False)
 
+    @app_commands.command(
+        name="alias",
+        description="Create a personal alias for a server (makes it easier to reference).",
+    )
+    @app_commands.describe(
+        server="Server UUID or name to create an alias for",
+        alias="Your desired alias name (e.g., 'survival', 'creative')",
+    )
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def create_alias(self, inter: discord.Interaction, server: str, alias: str):
+        """Create a personal alias for easier server access."""
+        await inter.response.defer(ephemeral=True)
+        
+        # Validate alias name
+        alias = alias.strip().lower()
+        if not alias or len(alias) > 64:
+            await inter.followup.send(
+                "Alias must be between 1 and 64 characters.", ephemeral=True
+            )
+            return
+        
+        # Resolve the server to get UUID and panel
+        uuid, panel = await resolve_identifier_and_panel(inter.user.id, server)
+        if not uuid or not panel:
+            await inter.followup.send(
+                "Server not found. Make sure you have access to it via `/link`.",
+                ephemeral=True,
+            )
+            return
+        
+        # Create the alias
+        async with SessionLocal() as s:
+            from ..services.alias import create_or_update_alias
+            
+            await create_or_update_alias(
+                s, alias=alias, uuid=uuid, panel_url=panel, user_id=inter.user.id
+            )
+            await s.commit()
+        
+        await inter.followup.send(
+            f"✅ Alias **`{alias}`** created for server `{uuid[:8]}...`\n"
+            f"You can now use `{alias}` in any server command!",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="alias_list", description="List all your personal server aliases."
+    )
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def list_aliases(self, inter: discord.Interaction):
+        """List all personal aliases."""
+        await inter.response.defer(ephemeral=True)
+        
+        async with SessionLocal() as s:
+            from ..services.alias import list_user_aliases
+            
+            aliases = await list_user_aliases(s, inter.user.id)
+        
+        if not aliases:
+            await inter.followup.send(
+                "You don't have any aliases yet. Use `/alias` to create one!",
+                ephemeral=True,
+            )
+            return
+        
+        lines = ["**Your Server Aliases:**\n"]
+        for a in aliases[:25]:  # Limit to 25 to avoid message length issues
+            panel_info = f" → `{a.panel_url}`" if a.panel_url else ""
+            lines.append(f"• **`{a.alias}`** → `{a.uuid[:8]}...`{panel_info}")
+        
+        await inter.followup.send("\n".join(lines), ephemeral=True)
+
+    @app_commands.command(
+        name="alias_delete", description="Delete one of your personal server aliases."
+    )
+    @app_commands.describe(alias="The alias to delete")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def delete_alias(self, inter: discord.Interaction, alias: str):
+        """Delete a personal alias."""
+        await inter.response.defer(ephemeral=True)
+        
+        alias = alias.strip().lower()
+        
+        async with SessionLocal() as s:
+            from ..services.alias import delete_alias as delete_alias_func
+            
+            deleted = await delete_alias_func(s, alias, user_id=inter.user.id)
+            await s.commit()
+        
+        if deleted:
+            await inter.followup.send(
+                f"✅ Alias **`{alias}`** has been deleted.", ephemeral=True
+            )
+        else:
+            await inter.followup.send(
+                f"❌ Alias **`{alias}`** not found in your aliases.", ephemeral=True
+            )
 
 
 async def setup(bot: commands.Bot):
