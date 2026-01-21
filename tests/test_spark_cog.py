@@ -278,3 +278,76 @@ class TestSparkCog:
             assert "Server not found" in call_args[0][0]
             assert call_args[1]["ephemeral"] is True
 
+    @pytest.mark.asyncio
+    async def test_spark_auto_command_custom_timeout(self, cog, interaction):
+        """Test automated Spark profiling with custom timeout parameter."""
+        interaction.user = Mock()
+        interaction.user.id = 123456
+
+        mock_result = {
+            "summary": {
+                "platform": "Paper 1.20.1",
+                "mc_version": "1.20.1",
+                "duration": 60.0,
+                "sampler": "cpu",
+            },
+            "top_sources": [],
+            "alerts": [],
+        }
+
+        with patch("bot.cogs.spark.resolve_identifier_and_panel", new_callable=AsyncMock) as mock_resolve, \
+             patch("bot.cogs.spark.get_user_token_for_panel", new_callable=AsyncMock) as mock_token, \
+             patch("bot.cogs.spark.PteroClient") as mock_client_class, \
+             patch("bot.cogs.spark.send_console_command", new_callable=AsyncMock) as mock_send_cmd, \
+             patch("bot.cogs.spark.fetch_recent_logs", new_callable=AsyncMock) as mock_fetch_logs, \
+             patch("bot.cogs.spark.analyze_spark_report", new_callable=AsyncMock) as mock_analyze, \
+             patch("bot.cogs.spark.format_discord_report") as mock_format, \
+             patch("bot.cogs.spark.asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
+             patch("bot.cogs.spark.settings") as mock_settings:
+
+            # Mock configuration
+            mock_settings.spark_auto_command = "/spark profiler start --timeout 30 --interval 1"
+            
+            # Mock resolve
+            mock_resolve.return_value = ("test-uuid-1234", "https://panel.example.com")
+            
+            # Mock token
+            mock_token.return_value = "test-token-abc"
+            
+            # Mock client
+            mock_client = Mock()
+            mock_ws_info = {
+                "data": {
+                    "socket": "wss://panel.example.com/ws/test",
+                    "token": "ws-token-xyz"
+                }
+            }
+            mock_client.websocket_info = AsyncMock(return_value=mock_ws_info)
+            mock_client_class.return_value = mock_client
+            
+            # Mock logs with Spark URL
+            mock_fetch_logs.return_value = [
+                "[INFO] Starting profiler...",
+                "[INFO] Profiling complete!",
+                "[INFO] View the report: https://spark.lucko.me/abc123xyz"
+            ]
+            
+            # Mock analysis
+            mock_analyze.return_value = mock_result
+            mock_format.return_value = "Test formatted message"
+            
+            # Call with custom timeout of 60 seconds
+            await cog.spark_auto.callback(cog, interaction, "test-server", timeout=60)
+            
+            # Verify command was sent with custom timeout
+            mock_send_cmd.assert_called_once()
+            sent_command = mock_send_cmd.call_args[0][3]  # 4th argument is the command
+            assert "--timeout 60" in sent_command
+            
+            # Verify sleep was called with custom timeout + buffer
+            mock_sleep.assert_called_once_with(65)  # 60 + 5
+            
+            # Verify analysis was called
+            mock_analyze.assert_called_once_with("https://spark.lucko.me/abc123xyz")
+
+

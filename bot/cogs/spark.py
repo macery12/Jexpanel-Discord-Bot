@@ -180,10 +180,18 @@ class SparkCog(commands.Cog):
         name="spark_auto",
         description="Automatically run Spark profiler on a server and analyze the results"
     )
-    @app_commands.describe(server="Server UUID, name, or alias")
+    @app_commands.describe(
+        server="Server UUID, name, or alias",
+        timeout="How long to run Spark profiler (in seconds, default: 30)"
+    )
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def spark_auto(self, interaction: discord.Interaction, server: str):
+    async def spark_auto(
+        self, 
+        interaction: discord.Interaction, 
+        server: str,
+        timeout: int | None = None
+    ):
         """Automatically profile a server and analyze the Spark report.
         
         This command:
@@ -196,6 +204,7 @@ class SparkCog(commands.Cog):
         Args:
             interaction: Discord interaction
             server: Server identifier (alias, UUID, or name)
+            timeout: Optional timeout in seconds (default from config or 30)
         """
         # Defer response as this will take some time
         await interaction.response.defer()
@@ -220,12 +229,25 @@ class SparkCog(commands.Cog):
                 )
                 return
             
-            # Get the spark command from config
-            spark_command = settings.spark_auto_command
+            # Determine timeout value
+            if timeout is None:
+                # Extract from config command if not provided
+                spark_command = settings.spark_auto_command
+                timeout_match = re.search(r'--timeout\s+(\d+)', spark_command)
+                timeout = int(timeout_match.group(1)) if timeout_match else 30
+            else:
+                # Validate timeout range (1-300 seconds)
+                timeout = max(1, min(300, timeout))
             
-            # Extract timeout value from the command (default to 30 seconds)
-            timeout_match = re.search(r'--timeout\s+(\d+)', spark_command)
-            timeout = int(timeout_match.group(1)) if timeout_match else 30
+            # Build spark command with the timeout value
+            # Extract the base command and interval from config, replace timeout
+            base_command = settings.spark_auto_command
+            # Replace the timeout value in the command
+            if '--timeout' in base_command:
+                spark_command = re.sub(r'--timeout\s+\d+', f'--timeout {timeout}', base_command)
+            else:
+                # If no timeout in config, add it
+                spark_command = f"{base_command} --timeout {timeout}"
             
             # Send initial status message
             await interaction.followup.send(
