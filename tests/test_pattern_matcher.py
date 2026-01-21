@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 # Ensure no SPARK_RULES_URL is set for tests to use local file
 if "SPARK_RULES_URL" in os.environ:
     del os.environ["SPARK_RULES_URL"]
@@ -284,15 +282,15 @@ class TestSuspectBuilding:
         detected_mods = {
             "create": {
                 "display_name": "Create",
-                "severity": 4,
-                "tags": ["automation", "ticking_block_entities"],
+                "severity": 5,  # Higher severity
+                "tags": ["automation", "ticking_block_entities", "machines"],  # More tags
             }
         }
         matched_patterns = [
             {
                 "id": "tile_entity_pressure",
-                "weight": 6,
-                "tags": ["ticking_block_entities", "machines"],
+                "weight": 8,
+                "tags": ["ticking_block_entities", "machines"],  # 2 matching tags
             }
         ]
         
@@ -301,7 +299,7 @@ class TestSuspectBuilding:
         assert len(suspects) == 1
         assert suspects[0]["name"] == "Create"
         assert suspects[0]["type"] == "mod"
-        assert suspects[0]["confidence"] > 0
+        assert suspects[0]["confidence"] >= 55  # Should meet minimum confidence
 
     def test_build_suspects_without_matching_tags(self):
         """Test building suspects when tags don't match."""
@@ -323,6 +321,28 @@ class TestSuspectBuilding:
         suspects = _build_suspects(detected_mods, matched_patterns)
         
         # Mod is present but doesn't match symptoms, so should be empty
+        assert len(suspects) == 0
+
+    def test_build_suspects_low_pattern_weight(self):
+        """Test that suspects are not shown when pattern weight is too low."""
+        detected_mods = {
+            "create": {
+                "display_name": "Create",
+                "severity": 4,
+                "tags": ["automation", "ticking_block_entities"],
+            }
+        }
+        matched_patterns = [
+            {
+                "id": "minor_issue",
+                "weight": 3,  # Below threshold of 6
+                "tags": ["ticking_block_entities"],
+            }
+        ]
+        
+        suspects = _build_suspects(detected_mods, matched_patterns)
+        
+        # Pattern weight too low, should not show suspects even with matching tags
         assert len(suspects) == 0
 
     def test_suspects_sorted_by_confidence(self):

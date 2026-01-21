@@ -310,6 +310,11 @@ def _build_suspects(
         pattern_tags.update(tags)
         total_pattern_weight += pattern.get("weight", 0)
     
+    # Don't show suspects if there's insufficient evidence of problems
+    # Require at least weight 6 (one meaningful pattern like "high_mspt" or "low_tps")
+    if total_pattern_weight < 6:
+        return []
+    
     # Score each detected mod
     for mod_key, mod_data in detected_mods.items():
         mod_tags = set(mod_data.get("tags", []))
@@ -326,10 +331,14 @@ def _build_suspects(
         # Bonus for tag overlap
         tag_overlap_bonus = len(matching_tags) * 5
         
-        # Bonus proportional to pattern weight
-        pattern_bonus = min(20, total_pattern_weight // 2)
+        # Bonus proportional to pattern weight (more significant now)
+        pattern_bonus = min(30, total_pattern_weight)
         
         confidence = min(100, base_confidence + tag_overlap_bonus + pattern_bonus)
+        
+        # Require minimum confidence threshold (55%) to report as suspect
+        if confidence < 55:
+            continue
         
         # Build reasons list
         reasons = []
