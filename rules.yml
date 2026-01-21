@@ -52,9 +52,12 @@ thresholds:
   loaded_chunks_warn: 12000
   loaded_chunks_bad: 20000
 
-  entities_warn: 5000
-  entities_bad: 9000
+  # Entity thresholds - aligned with real-world performance impact
+  # Most servers start lagging noticeably around 1000-1500 entities
+  entities_warn: 1000
+  entities_bad: 1500
 
+  # Tile entity (block entity) thresholds
   tile_entities_warn: 2000
   tile_entities_bad: 3500
 
@@ -320,6 +323,71 @@ mods:
     extra_checks:
       - "Entity counts (especially mob farms)"
       - "Any IO / autosave spike indicators"
+
+  productive_bees:
+    display_name: "Productive Bees"
+    match:
+      - "productivebees"
+      - "productive bees"
+      - "regex:(?i)productive\\s*bees"
+    severity: 4
+    tags: ["mobs", "entities", "ai_pathfinding", "ticking_block_entities"]
+    known_issues:
+      - "Large numbers of bees (entities) can strain entity simulation and pathfinding."
+      - "Many active beehives/nests add to ticking block entity load."
+    symptoms:
+      - "High entity counts in areas with large bee setups."
+      - "MSPT increases with bee population and hive count."
+    tweaks:
+      - "Limit total bee population; use fewer hives with higher efficiency."
+      - "Avoid chunkloading massive bee farms."
+      - "Reduce bee spawn rates and breeding frequency in config."
+    pitfalls:
+      - "Massive bee farms with hundreds/thousands of bees loaded."
+    extra_checks:
+      - "Entity breakdown showing high bee counts"
+      - "Ticking block entity counts"
+
+  twilightforest:
+    display_name: "The Twilight Forest"
+    match:
+      - "twilightforest"
+      - "twilight forest"
+      - "regex:(?i)twilight\\s*forest"
+    severity: 4
+    tags: ["dimensions", "mobs", "entities", "worldgen", "structures"]
+    known_issues:
+      - "Dense mobs and boss entities can be performance-heavy."
+      - "Large structures and terrain generation add chunk load costs."
+    symptoms:
+      - "Lag when exploring or fighting in Twilight Forest dimension."
+      - "Entity counts spike with boss battles and dungeon exploration."
+    tweaks:
+      - "Limit concurrent players in Twilight Forest."
+      - "Pregenerate dimension chunks to reduce on-the-fly worldgen cost."
+      - "Reduce mob density in config if available."
+    pitfalls:
+      - "Leaving large portions of Twilight Forest permanently chunkloaded."
+    extra_checks:
+      - "Per-dimension performance metrics"
+      - "Entity counts by dimension"
+
+  aquaculture:
+    display_name: "Aquaculture"
+    match:
+      - "aquaculture"
+      - "regex:(?i)\\baquaculture\\b"
+    severity: 3
+    tags: ["mobs", "entities"]
+    known_issues:
+      - "Additional fish entities and water creatures add to entity simulation."
+    symptoms:
+      - "Higher entity counts near water bodies."
+    tweaks:
+      - "Reduce fish spawn rates if configurable."
+      - "Avoid large water-heavy chunkloaded areas."
+    pitfalls:
+      - "Large fish farms or ocean chunks always loaded."
 
   ars_nouveau:
     display_name: "Ars Nouveau"
