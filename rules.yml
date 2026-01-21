@@ -389,6 +389,80 @@ mods:
     pitfalls:
       - "Large fish farms or ocean chunks always loaded."
 
+  naturalist:
+    display_name: "Naturalist"
+    match:
+      - "naturalist"
+      - "regex:(?i)\\bnaturalist\\b"
+    severity: 3
+    tags: ["mobs", "entities", "ai_pathfinding"]
+    known_issues:
+      - "Additional animals and creatures add to entity simulation cost."
+    symptoms:
+      - "Increased entity counts in natural biomes."
+    tweaks:
+      - "Reduce spawn rates in config."
+      - "Limit chunkloaded wilderness areas."
+    pitfalls:
+      - "Stacking with other mob-adding mods."
+
+  betteranimalsplus:
+    display_name: "Better Animals Plus"
+    match:
+      - "betteranimalsplus"
+      - "better animals plus"
+      - "regex:(?i)better\\s*animals"
+    severity: 3
+    tags: ["mobs", "entities", "ai_pathfinding"]
+    known_issues:
+      - "Additional animal types and behaviors increase entity simulation."
+      - "Some animals have complex AI (bears, wolves, etc.)."
+    symptoms:
+      - "Higher entity counts in wilderness areas."
+    tweaks:
+      - "Reduce spawn weights in config."
+      - "Disable problematic animals if causing issues."
+    pitfalls:
+      - "Chunkloading large wilderness with many spawns."
+
+  mowziesmobs:
+    display_name: "Mowzie's Mobs"
+    match:
+      - "mowziesmobs"
+      - "mowzie's mobs"
+      - "mowzies mobs"
+      - "regex:(?i)mowzie'?s\\s*mobs"
+    severity: 4
+    tags: ["mobs", "entities", "ai_pathfinding"]
+    known_issues:
+      - "Boss mobs and unique creatures have complex AI and animations."
+      - "Can be performance-heavy when multiple instances are active."
+    symptoms:
+      - "Lag during boss battles or in areas with Mowzie's mobs."
+    tweaks:
+      - "Reduce spawn rates for boss/heavy mobs."
+      - "Avoid chunkloading areas with multiple bosses."
+    pitfalls:
+      - "Multiple boss fights in loaded chunks simultaneously."
+
+  critters_and_companions:
+    display_name: "Critters and Companions"
+    match:
+      - "crittersandcompanions"
+      - "critters_and_companions"
+      - "critters and companions"
+      - "regex:(?i)critters\\s*and\\s*companions"
+    severity: 3
+    tags: ["mobs", "entities"]
+    known_issues:
+      - "Additional passive mobs add to entity counts."
+    symptoms:
+      - "Increased entities in various biomes."
+    tweaks:
+      - "Reduce spawn rates if experiencing entity pressure."
+    pitfalls:
+      - "High spawn rates with other mob mods."
+
   ars_nouveau:
     display_name: "Ars Nouveau"
     match:
