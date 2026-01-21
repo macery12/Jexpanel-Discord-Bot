@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+# Ensure no SPARK_RULES_URL is set for tests to use local file
+if "SPARK_RULES_URL" in os.environ:
+    del os.environ["SPARK_RULES_URL"]
 
 from bot.utils.pattern_matcher import (
     _build_recommendations,

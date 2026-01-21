@@ -33,6 +33,10 @@ class Settings(BaseSettings):
         default="/spark profiler start --timeout 30 --interval 1",
         alias="SPARK_AUTO_COMMAND"
     )
+    spark_rules_url: str | None = Field(
+        default=None,
+        alias="SPARK_RULES_URL"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

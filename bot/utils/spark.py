@@ -118,7 +118,14 @@ def _parse_spark_json(raw: dict[str, Any]) -> dict[str, Any]:
     
     # Get recent TPS (preferring 1m, then average)
     tps_recent = tps.get("last1m") or avg_tps
-    tps_average = (tps.get("last5m", 0) + tps.get("last15m", 0)) / 2 if tps.get("last5m") and tps.get("last15m") else tps_recent
+    
+    # Calculate average TPS safely
+    tps_5m = tps.get("last5m")
+    tps_15m = tps.get("last15m")
+    if tps_5m is not None and tps_15m is not None:
+        tps_average = (tps_5m + tps_15m) / 2
+    else:
+        tps_average = tps_recent
     
     # Extract world metrics
     world_loaded_chunks = world.get("totalChunks")
@@ -180,9 +187,9 @@ def _parse_spark_json(raw: dict[str, Any]) -> dict[str, Any]:
             "tile_entities_total": world_tile_entities_total,  # For pattern matching
         },
         "gc": {
-            **gc,  # Keep original GC data
             "young": gc_young,  # For pattern matching
             "old": gc_old,  # For pattern matching
+            **gc,  # Keep original GC data (may overwrite young/old with raw data if present)
         },
         "memory": {
             "heap_used_mb": round((heap.get("used", 0) / 1024 / 1024), 1),

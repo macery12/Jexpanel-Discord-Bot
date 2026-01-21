@@ -10,6 +10,7 @@ based on normalized Spark profiler data. It uses YAML rules to:
 
 from __future__ import annotations
 
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -18,14 +19,48 @@ from typing import Any
 import yaml
 
 
-# Cache the rules file to avoid repeated I/O
+# Cache the rules file to avoid repeated I/O or network calls
 @lru_cache(maxsize=1)
 def _load_rules() -> dict[str, Any]:
     """Load and cache the rules.yml file.
     
+    First checks SPARK_RULES_URL environment variable for a URL.
+    If set, fetches the rules from that URL.
+    Otherwise, falls back to local rules.yml file.
+    
     Returns:
         Parsed YAML rules dictionary
+        
+    Raises:
+        Exception: If rules cannot be loaded from either source
     """
+    rules_url = os.environ.get("SPARK_RULES_URL")
+    
+    if rules_url and rules_url.strip():
+        # Load from URL
+        try:
+            import urllib.request
+            import warnings
+            
+            rules_url = rules_url.strip()
+            if not rules_url.endswith('.yml'):
+                warnings.warn(
+                    f"SPARK_RULES_URL should end with .yml, got: {rules_url}. "
+                    "Proceeding anyway..."
+                )
+            
+            with urllib.request.urlopen(rules_url, timeout=10) as response:
+                content = response.read()
+                return yaml.safe_load(content)
+        except Exception as e:
+            import warnings
+            warnings.warn(
+                f"Failed to load rules from URL '{rules_url}': {e}. "
+                "Falling back to local rules.yml"
+            )
+            # Fall through to local file
+    
+    # Load from local file
     rules_path = Path(__file__).parent.parent.parent / "rules.yml"
     with open(rules_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -77,9 +112,12 @@ def _matches_mod(mod_name: str, pattern: str) -> bool:
         regex_pattern = pattern[6:]  # Remove "regex:" prefix
         try:
             return bool(re.search(regex_pattern, mod_name, re.IGNORECASE))
-        except re.error:
-            # Invalid regex, fall back to substring
-            pass
+        except re.error as e:
+            # Log the error for debugging but don't crash
+            # In production, this should use proper logging
+            import warnings
+            warnings.warn(f"Invalid regex pattern '{regex_pattern}': {e}")
+            return False
     
     # Case-insensitive substring match
     pattern_lower = pattern.lower()
@@ -110,6 +148,7 @@ def _detect_mods(parsed_data: dict[str, Any], rules: dict[str, Any]) -> dict[str
             match_patterns = rule_data.get("match", [])
             
             # Check if any pattern matches
+            matched = False
             for pattern in match_patterns:
                 if _matches_mod(mod_id, pattern):
                     detected[rule_key] = {
@@ -117,7 +156,11 @@ def _detect_mods(parsed_data: dict[str, Any], rules: dict[str, Any]) -> dict[str
                         "detected_name": mod_id,
                         "version": mod_version,
                     }
+                    matched = True
                     break  # Stop checking patterns for this rule
+            
+            if matched:
+                break  # Move to next mod
     
     return detected
 
