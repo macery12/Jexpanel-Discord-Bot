@@ -111,6 +111,7 @@ async def resolve_identifier_and_panel(
         )
         panels = sorted({row[0] for row in result.all()})
     
+    needle = val.lower()  # Compute once for efficiency
     async with aiohttp.ClientSession() as sess:
         for panel_url in panels:
             tok = await get_user_token_for_panel(user_id, panel_url)
@@ -125,7 +126,7 @@ async def resolve_identifier_and_panel(
                     name = srv.get("name", "")
                     
                     # Match by partial UUID or name (case-insensitive)
-                    if val.lower() in uuid.lower() or val.lower() in name.lower():
+                    if needle in uuid.lower() or needle in name.lower():
                         return (uuid, panel_url)
             except Exception:
                 continue
