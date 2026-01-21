@@ -1,898 +1,1088 @@
-# rules.yml
-# Spark pattern-matching rules for Forge servers (focus: mod-related TPS/MSPT problems)
-# Notes:
-# - This is intentionally "data-first" and resilient: rules rely on tags + symptoms rather than hardcoding Spark field paths.
-# - Keep mod match patterns broad (case-insensitive / regex) because mod names vary between pack lists and Spark exports.
-
-version: 1
+version: '1.1'
 schema:
   diagnosis_object:
-    overall_status: "ok|warn|bad"
-    signals: ["string"]
+    overall_status: ok|warn|bad
+    signals:
+    - string
     suspects:
-      - name: "string"
-        type: "mod|category|system"
-        confidence: 0
-        reasons: ["string"]
-        tags: ["string"]
-    recommendations: ["string"]
-    missing_data: ["string"]
-
+    - name: string
+      type: mod|category|system
+      confidence: 0
+      reasons:
+      - string
+      tags:
+      - string
+    recommendations:
+    - string
+    missing_data:
+    - string
 tags:
-  # Categories used to connect patterns ↔ mod suspects
-  - worldgen
-  - structures
-  - dimensions
-  - mobs
-  - entities
-  - ai_pathfinding
-  - machines
-  - automation
-  - logistics
-  - storage
-  - networking
-  - ticking_block_entities
-  - chunk_loading
-  - chunkgen
-  - nbt_io
-  - memory_pressure
-  - gc_pressure
-  - render_server_load
-  - misc
-
+- worldgen
+- structures
+- dimensions
+- mobs
+- entities
+- ai_pathfinding
+- machines
+- automation
+- logistics
+- storage
+- networking
+- ticking_block_entities
+- chunk_loading
+- chunkgen
+- nbt_io
+- memory_pressure
+- gc_pressure
+- render_server_load
+- misc
 thresholds:
-  # These are "starter" heuristics. Your matcher can treat them as defaults and allow overrides.
   tps_warn: 18.0
   tps_bad: 15.0
-
   mspt_warn: 50.0
   mspt_bad: 70.0
-
-  # Generic counts (if you have these from spark or from derived metrics)
   loaded_chunks_warn: 12000
   loaded_chunks_bad: 20000
-
-  # Entity thresholds - aligned with real-world performance impact
-  # Most servers start lagging noticeably around 1000-1500 entities
   entities_warn: 1000
   entities_bad: 1500
-
-  # Tile entity (block entity) thresholds
   tile_entities_warn: 2000
   tile_entities_bad: 3500
-
-  # GC heuristics (units depend on your parser; treat as relative if you only have counts/time)
   gc_young_warn: 200
   gc_young_bad: 400
   gc_old_warn: 50
   gc_old_bad: 120
-
-  # Burst indicators (if you compute variance / spikes)
   tick_spike_mspt_warn: 100
   tick_spike_mspt_bad: 200
-
 common_recommendations:
-  # These are global, not mod-specific, and can be emitted when patterns match.
-  - id: "general_timing"
-    when_tags: ["misc"]
-    text:
-      - "Confirm you are measuring during normal load (not first-join worldgen or initial chunk pregeneration)."
-      - "If Spark export is old or from a different load scenario, capture a new Spark report during the lag event."
-
-  - id: "general_chunk_health"
-    when_tags: ["chunk_loading", "chunkgen"]
-    text:
-      - "Audit forced chunk loads (Forge chunkloading, mod chunk loaders, /forceload). Reduce always-loaded areas."
-      - "Limit view-distance and simulation-distance to sane values for your hardware and playercount."
-      - "Consider pregenerating chunks for large modpacks to shift cost out of gameplay hours."
-
-  - id: "general_entity_health"
-    when_tags: ["entities", "mobs", "ai_pathfinding"]
-    text:
-      - "Find top entity types and sources (spawners, farms, mod mobs, chunkloaded areas). Reduce spawn density and cap counts."
-      - "Reduce pathfinding-heavy situations (villager trading halls, massive mob pens, dense fences)."
-
-  - id: "general_gc_memory"
-    when_tags: ["gc_pressure", "memory_pressure", "nbt_io"]
-    text:
-      - "If old gen pressure is high, check for chunk/entity accumulation and oversized NBT (storage systems, backpacks, inventories)."
-      - "If young gen churn is high, suspect frequent allocations: rapid item transport, frequent block updates, heavy automation."
-      - "Ensure JVM flags and memory sizing are appropriate for your server and modpack."
-
-  - id: "general_performance_mods"
-    when_tags: ["misc"]
-    text:
-      - "On Forge, consider server-side performance mods where compatible: ModernFix, FerriteCore, Starlight (if available for your MC/Forge), Canary (if used in your ecosystem). Validate compatibility with your mod list and MC version."
-      - "Avoid stacking multiple overlapping optimization mods that patch the same systems unless the pack author recommends it."
-
+- id: general_timing
+  when_tags:
+  - misc
+  text:
+  - Confirm you are measuring during normal load (not first-join worldgen or initial chunk pregeneration).
+  - If Spark export is old or from a different load scenario, capture a new Spark report during the lag event.
+- id: general_chunk_health
+  when_tags:
+  - chunk_loading
+  - chunkgen
+  text:
+  - Audit forced chunk loads (Forge chunkloading, mod chunk loaders, /forceload). Reduce always-loaded areas.
+  - Limit view-distance and simulation-distance to sane values for your hardware and playercount.
+  - Consider pregenerating chunks for large modpacks to shift cost out of gameplay hours.
+- id: general_entity_health
+  when_tags:
+  - entities
+  - mobs
+  - ai_pathfinding
+  text:
+  - Find top entity types and sources (spawners, farms, mod mobs, chunkloaded areas). Reduce spawn density and cap counts.
+  - Reduce pathfinding-heavy situations (villager trading halls, massive mob pens, dense fences).
+- id: general_gc_memory
+  when_tags:
+  - gc_pressure
+  - memory_pressure
+  - nbt_io
+  text:
+  - If old gen pressure is high, check for chunk/entity accumulation and oversized NBT (storage systems, backpacks, inventories).
+  - 'If young gen churn is high, suspect frequent allocations: rapid item transport, frequent block updates, heavy automation.'
+  - Ensure JVM flags and memory sizing are appropriate for your server and modpack.
+- id: general_performance_mods
+  when_tags:
+  - misc
+  text:
+  - 'On Forge, consider server-side performance mods where compatible: ModernFix, FerriteCore, Starlight (if available for
+    your MC/Forge), Canary (if used in your ecosystem). Validate compatibility with your mod list and MC version.'
+  - Avoid stacking multiple overlapping optimization mods that patch the same systems unless the pack author recommends it.
 mods:
-  # Each mod rule can add suspect entries and recommended mitigations when the mod is present.
-  # You can keep 'tweaks' actionable but avoid claiming exact config keys unless you know them.
-  # Fields:
-  # - match: list of patterns. Strings treated as case-insensitive substring; regex:... treated as regex.
-  # - severity: 1-5 baseline impact when symptoms align
-  # - tags: how patterns should associate this mod with symptoms
-  # - symptoms: what to look for (used as text + tags)
-  # - tweaks: actionable mitigation steps
-  # - pitfalls: common misconfigs
-  # - extra_checks: what data would increase confidence
-
   minecolonies:
-    display_name: "MineColonies"
+    display_name: MineColonies
     match:
-      - "minecolonies"
-      - "mine colonies"
-      - "com.minecolonies"
-      - "regex:(?i)mine\\s*colonies"
+    - minecolonies
+    - mine colonies
+    - com.minecolonies
+    - regex:(?i)mine\s*colonies
     severity: 5
-    tags: ["ai_pathfinding", "entities", "ticking_block_entities", "nbt_io", "chunk_loading"]
+    tags:
+    - ai_pathfinding
+    - entities
+    - ticking_block_entities
+    - nbt_io
+    - chunk_loading
     known_issues:
-      - "Colonist AI + pathfinding scales poorly with colony size and population."
-      - "Many active block entities (buildings, racks, workstations) can increase tick cost."
-      - "High NBT churn from inventories and logistics inside colonies."
+    - Colonist AI + pathfinding scales poorly with colony size and population.
+    - Many active block entities (buildings, racks, workstations) can increase tick cost.
+    - High NBT churn from inventories and logistics inside colonies.
     symptoms:
-      - "MSPT increases with colony size and number of citizens."
-      - "Tick spikes during building, deliveries, and large colony activity."
-      - "Pathfinding-heavy areas (tight corridors, doors, fences) magnify cost."
+    - MSPT increases with colony size and number of citizens.
+    - Tick spikes during building, deliveries, and large colony activity.
+    - Pathfinding-heavy areas (tight corridors, doors, fences) magnify cost.
     tweaks:
-      - "Reduce active citizen count per colony; cap or spread colonies across regions."
-      - "Avoid overly dense colony layouts; widen paths and reduce obstructions to pathfinding."
-      - "Disable or reduce frequent scans/updates in MineColonies config (search for AI update rates, pathfinding settings, request scanning intervals)."
-      - "Keep colonies out of always-loaded chunks unless needed; avoid chunkloading entire colonies."
-      - "Limit storage complexity (avoid massive nested inventories/backpacks in colony storage)."
+    - Reduce active citizen count per colony; cap or spread colonies across regions.
+    - Avoid overly dense colony layouts; widen paths and reduce obstructions to pathfinding.
+    - Disable or reduce frequent scans/updates in MineColonies config (search for AI update rates, pathfinding settings, request
+      scanning intervals).
+    - Keep colonies out of always-loaded chunks unless needed; avoid chunkloading entire colonies.
+    - Limit storage complexity (avoid massive nested inventories/backpacks in colony storage).
     pitfalls:
-      - "Multiple large colonies chunkloaded 24/7."
-      - "Citizen count pushed far beyond intended defaults."
+    - Multiple large colonies chunkloaded 24/7.
+    - Citizen count pushed far beyond intended defaults.
     extra_checks:
-      - "Playercount during lag"
-      - "Loaded chunks near colonies"
-      - "Entity breakdown near colonies"
-      - "Top tick consumers / hottest methods if your spark export includes them"
-
+    - Playercount during lag
+    - Loaded chunks near colonies
+    - Entity breakdown near colonies
+    - Top tick consumers / hottest methods if your spark export includes them
+    modid: minecolonies
   create:
-    display_name: "Create"
+    display_name: Create
     match:
-      - "create"
-      - "create: core"
-      - "com.simibubi.create"
-      - "regex:(?i)\\bcreate\\b"
+    - create
+    - 'create: core'
+    - com.simibubi.create
+    - regex:(?i)\bcreate\b
     severity: 4
-    tags: ["automation", "ticking_block_entities", "entities", "chunk_loading", "memory_pressure"]
+    tags:
+    - automation
+    - ticking_block_entities
+    - entities
+    - chunk_loading
+    - memory_pressure
     known_issues:
-      - "Large moving contraptions and high-frequency kinetic networks can be tick-expensive."
-      - "Item transport at massive scale (belts, funnels, depots) increases updates and allocations."
+    - Large moving contraptions and high-frequency kinetic networks can be tick-expensive.
+    - Item transport at massive scale (belts, funnels, depots) increases updates and allocations.
     symptoms:
-      - "Lag near bases with dense Create machinery."
-      - "Tick spikes when contraptions assemble/disassemble or move through chunk borders."
-      - "High allocation / young GC churn with very active item movement."
+    - Lag near bases with dense Create machinery.
+    - Tick spikes when contraptions assemble/disassemble or move through chunk borders.
+    - High allocation / young GC churn with very active item movement.
     tweaks:
-      - "Reduce contraption complexity: fewer moving blocks, fewer interacting bearings, avoid huge trains in tight loops."
-      - "Reduce belt/funnel throughput: batch item movement, use fewer transfer points."
-      - "Keep Create machinery within fewer chunks; avoid crossing chunk borders with moving contraptions."
-      - "Avoid chunkloading large Create bases unless necessary."
+    - 'Reduce contraption complexity: fewer moving blocks, fewer interacting bearings, avoid huge trains in tight loops.'
+    - 'Reduce belt/funnel throughput: batch item movement, use fewer transfer points.'
+    - Keep Create machinery within fewer chunks; avoid crossing chunk borders with moving contraptions.
+    - Avoid chunkloading large Create bases unless necessary.
     pitfalls:
-      - "Mega-factories with thousands of ticking components."
-      - "Contraptions repeatedly assembling on short cycles."
+    - Mega-factories with thousands of ticking components.
+    - Contraptions repeatedly assembling on short cycles.
     extra_checks:
-      - "Entity count (items in world)"
-      - "Loaded chunks around Create bases"
-      - "Tick spike frequency and timing"
-
+    - Entity count (items in world)
+    - Loaded chunks around Create bases
+    - Tick spike frequency and timing
+    modid: create
   mekanism:
-    display_name: "Mekanism"
+    display_name: Mekanism
     match:
-      - "mekanism"
-      - "mekanismgenerators"
-      - "mekanismtools"
-      - "regex:(?i)\\bmekanism\\b"
+    - mekanism
+    - mekanismgenerators
+    - mekanismtools
+    - regex:(?i)\bmekanism\b
     severity: 4
-    tags: ["machines", "ticking_block_entities", "logistics", "nbt_io", "memory_pressure"]
+    tags:
+    - machines
+    - ticking_block_entities
+    - logistics
+    - nbt_io
+    - memory_pressure
     known_issues:
-      - "Large cable networks and frequent updates can be expensive."
-      - "High-throughput item/fluid/gas logistics can generate tick and memory pressure."
+    - Large cable networks and frequent updates can be expensive.
+    - High-throughput item/fluid/gas logistics can generate tick and memory pressure.
     symptoms:
-      - "Lag scales with size of cable networks and number of machines."
-      - "High young GC churn when logistics are extremely active."
+    - Lag scales with size of cable networks and number of machines.
+    - High young GC churn when logistics are extremely active.
     tweaks:
-      - "Reduce network complexity: shorter cable runs, fewer branches, localize processing."
-      - "Avoid excessive auto-eject/auto-pull across many machines simultaneously; batch operations."
-      - "Limit chunkloading of huge Mekanism setups."
+    - 'Reduce network complexity: shorter cable runs, fewer branches, localize processing.'
+    - Avoid excessive auto-eject/auto-pull across many machines simultaneously; batch operations.
+    - Limit chunkloading of huge Mekanism setups.
     pitfalls:
-      - "One massive centralized base with cables spanning many chunks."
+    - One massive centralized base with cables spanning many chunks.
     extra_checks:
-      - "Tile entity counts"
-      - "Chunkloaded areas"
-
-  applied_energistics_2:
-    display_name: "Applied Energistics 2 (AE2)"
+    - Tile entity counts
+    - Chunkloaded areas
+    modid: mekanism
+  ae2:
+    display_name: Applied Energistics 2 (AE2)
     match:
-      - "appliedenergistics2"
-      - "ae2"
-      - "appeng"
-      - "regex:(?i)\\bae2\\b"
+    - ae2
+    - appliedenergistics2
+    - appeng
+    - regex:(?i)\bae2\b
+    - applied_energistics_2
     severity: 4
-    tags: ["storage", "nbt_io", "ticking_block_entities", "memory_pressure"]
+    tags:
+    - storage
+    - nbt_io
+    - ticking_block_entities
+    - memory_pressure
     known_issues:
-      - "Very large networks with autocrafting and many channels/devices can be heavy."
-      - "Constant crafting checks / pattern providers at scale can increase tick cost."
+    - Very large networks with autocrafting and many channels/devices can be heavy.
+    - Constant crafting checks / pattern providers at scale can increase tick cost.
     symptoms:
-      - "Lag near bases with huge AE2 networks."
-      - "Tick spikes during crafting jobs, large exports/imports, or network recalculations."
+    - Lag near bases with huge AE2 networks.
+    - Tick spikes during crafting jobs, large exports/imports, or network recalculations.
     tweaks:
-      - "Split enormous networks into smaller subnetworks."
-      - "Reduce constantly-running crafting/export operations; prefer demand-driven behavior."
-      - "Avoid millions of items/types stored if possible; clean up junk types."
+    - Split enormous networks into smaller subnetworks.
+    - Reduce constantly-running crafting/export operations; prefer demand-driven behavior.
+    - Avoid millions of items/types stored if possible; clean up junk types.
     pitfalls:
-      - "Huge autocrafting farms always active."
+    - Huge autocrafting farms always active.
     extra_checks:
-      - "NBT size / storage complexity indicators (if available)"
-      - "Tick spikes correlated with crafting operations"
-
-  refined_storage:
-    display_name: "Refined Storage"
+    - NBT size / storage complexity indicators (if available)
+    - Tick spikes correlated with crafting operations
+    modid: ae2
+  rs:
+    display_name: Refined Storage
     match:
-      - "refinedstorage"
-      - "rs"
-      - "regex:(?i)refined\\s*storage"
+    - rs
+    - refinedstorage
+    - regex:(?i)refined\s*storage
+    - refined_storage
     severity: 4
-    tags: ["storage", "nbt_io", "ticking_block_entities", "memory_pressure"]
+    tags:
+    - storage
+    - nbt_io
+    - ticking_block_entities
+    - memory_pressure
     known_issues:
-      - "Large networks with many external storages and exporters/importers can be costly."
-      - "High item type counts can add overhead."
+    - Large networks with many external storages and exporters/importers can be costly.
+    - High item type counts can add overhead.
     symptoms:
-      - "Lag near RS networks with many external connections."
-      - "Tick spikes with massive item throughput."
+    - Lag near RS networks with many external connections.
+    - Tick spikes with massive item throughput.
     tweaks:
-      - "Reduce number of constantly-active exporters/importers; consolidate."
-      - "Avoid excessive external storage busses and complex nested inventories."
-      - "Clean up item type bloat; avoid storing extreme numbers of unique NBT variants."
+    - Reduce number of constantly-active exporters/importers; consolidate.
+    - Avoid excessive external storage busses and complex nested inventories.
+    - Clean up item type bloat; avoid storing extreme numbers of unique NBT variants.
     pitfalls:
-      - "Many grids and crafters scanning constantly across chunkloaded areas."
+    - Many grids and crafters scanning constantly across chunkloaded areas.
     extra_checks:
-      - "Tick spikes and their periodicity"
-      - "Chunkloading around storage core"
-
-  ice_and_fire:
-    display_name: "Ice and Fire"
+    - Tick spikes and their periodicity
+    - Chunkloading around storage core
+    modid: rs
+  iceandfire:
+    display_name: Ice and Fire
     match:
-      - "iceandfire"
-      - "ice and fire"
-      - "iceandfire dragons"
-      - "regex:(?i)ice\\s*and\\s*fire"
+    - iceandfire
+    - ice and fire
+    - iceandfire dragons
+    - regex:(?i)ice\s*and\s*fire
+    - ice_and_fire
     severity: 5
-    tags: ["mobs", "entities", "ai_pathfinding", "dimensions"]
+    tags:
+    - mobs
+    - entities
+    - ai_pathfinding
+    - dimensions
     known_issues:
-      - "Large hostile mobs (dragons) and complex AI can be expensive, especially in high counts."
-      - "Worldgen structures and nests can add generation cost depending on config."
+    - Large hostile mobs (dragons) and complex AI can be expensive, especially in high counts.
+    - Worldgen structures and nests can add generation cost depending on config.
     symptoms:
-      - "Entity counts spike in regions with many I&F spawns."
-      - "MSPT rises with dragon activity and large mob battles."
+    - Entity counts spike in regions with many I&F spawns.
+    - MSPT rises with dragon activity and large mob battles.
     tweaks:
-      - "Reduce spawn rates and max counts in Ice and Fire config."
-      - "Reduce structure/nest generation frequency if worldgen is heavy."
-      - "Keep dragons from being chunkloaded or trapped in pathfinding-heavy pens."
+    - Reduce spawn rates and max counts in Ice and Fire config.
+    - Reduce structure/nest generation frequency if worldgen is heavy.
+    - Keep dragons from being chunkloaded or trapped in pathfinding-heavy pens.
     pitfalls:
-      - "High spawn multipliers in modpacks."
+    - High spawn multipliers in modpacks.
     extra_checks:
-      - "Entity breakdown by type"
-      - "Regions with persistent lag"
-
-  alexs_mobs:
-    display_name: "Alex's Mobs"
+    - Entity breakdown by type
+    - Regions with persistent lag
+    modid: iceandfire
+  citadel:
+    display_name: Alex's Mobs
     match:
-      - "alexsmobs"
-      - "alex's mobs"
-      - "citadel"
-      - "regex:(?i)alex'?s\\s*mobs"
+    - citadel
+    - alexsmobs
+    - alex's mobs
+    - regex:(?i)alex'?s\s*mobs
+    - alexs_mobs
     severity: 4
-    tags: ["mobs", "entities", "ai_pathfinding"]
+    tags:
+    - mobs
+    - entities
+    - ai_pathfinding
     known_issues:
-      - "Many additional mob types increase baseline entity simulation cost if spawn rates are high."
-      - "Some mobs have heavier AI/behaviors than vanilla."
+    - Many additional mob types increase baseline entity simulation cost if spawn rates are high.
+    - Some mobs have heavier AI/behaviors than vanilla.
     symptoms:
-      - "High entity counts in wilderness and loaded areas."
-      - "Lag increases with player exploration and chunkloading."
+    - High entity counts in wilderness and loaded areas.
+    - Lag increases with player exploration and chunkloading.
     tweaks:
-      - "Reduce spawn weights for heavier mobs; cap total spawns where supported."
-      - "Ensure Citadel and dependencies are correct versions (mismatches can cause instability)."
-      - "Avoid chunkloading large wilderness areas where these mobs spawn."
+    - Reduce spawn weights for heavier mobs; cap total spawns where supported.
+    - Ensure Citadel and dependencies are correct versions (mismatches can cause instability).
+    - Avoid chunkloading large wilderness areas where these mobs spawn.
     pitfalls:
-      - "Stacking multiple mob-expansion mods without tuning spawn balance."
+    - Stacking multiple mob-expansion mods without tuning spawn balance.
     extra_checks:
-      - "Entity totals and per-type breakdown"
-      - "Loaded chunks vs wilderness"
-
+    - Entity totals and per-type breakdown
+    - Loaded chunks vs wilderness
+    modid: citadel
   apotheosis:
-    display_name: "Apotheosis"
+    display_name: Apotheosis
     match:
-      - "apotheosis"
-      - "regex:(?i)\\bapotheosis\\b"
+    - apotheosis
+    - regex:(?i)\bapotheosis\b
     severity: 3
-    tags: ["mobs", "entities", "nbt_io", "memory_pressure"]
+    tags:
+    - mobs
+    - entities
+    - nbt_io
+    - memory_pressure
     known_issues:
-      - "Affix items add NBT complexity; large inventories of affix gear can bloat saves and memory."
-      - "Spawners and mob modifiers can increase mob counts and combat overhead."
+    - Affix items add NBT complexity; large inventories of affix gear can bloat saves and memory.
+    - Spawners and mob modifiers can increase mob counts and combat overhead.
     symptoms:
-      - "More mobs and spawner-heavy areas causing entity simulation load."
-      - "Potential save/IO spikes with lots of affix items."
+    - More mobs and spawner-heavy areas causing entity simulation load.
+    - Potential save/IO spikes with lots of affix items.
     tweaks:
-      - "Tune spawner and affix generation rates; reduce extreme item spam."
-      - "Limit farm designs that generate huge numbers of affix items."
+    - Tune spawner and affix generation rates; reduce extreme item spam.
+    - Limit farm designs that generate huge numbers of affix items.
     pitfalls:
-      - "Leaving spawner configs at very aggressive defaults in big packs."
+    - Leaving spawner configs at very aggressive defaults in big packs.
     extra_checks:
-      - "Entity counts (especially mob farms)"
-      - "Any IO / autosave spike indicators"
-
-  productive_bees:
-    display_name: "Productive Bees"
+    - Entity counts (especially mob farms)
+    - Any IO / autosave spike indicators
+    modid: apotheosis
+  productivebees:
+    display_name: Productive Bees
     match:
-      - "productivebees"
-      - "productive bees"
-      - "regex:(?i)productive\\s*bees"
+    - productivebees
+    - productive bees
+    - regex:(?i)productive\s*bees
+    - productive_bees
     severity: 4
-    tags: ["mobs", "entities", "ai_pathfinding", "ticking_block_entities"]
+    tags:
+    - mobs
+    - entities
+    - ai_pathfinding
+    - ticking_block_entities
     known_issues:
-      - "Large numbers of bees (entities) can strain entity simulation and pathfinding."
-      - "Many active beehives/nests add to ticking block entity load."
+    - Large numbers of bees (entities) can strain entity simulation and pathfinding.
+    - Many active beehives/nests add to ticking block entity load.
     symptoms:
-      - "High entity counts in areas with large bee setups."
-      - "MSPT increases with bee population and hive count."
+    - High entity counts in areas with large bee setups.
+    - MSPT increases with bee population and hive count.
     tweaks:
-      - "Limit total bee population; use fewer hives with higher efficiency."
-      - "Avoid chunkloading massive bee farms."
-      - "Reduce bee spawn rates and breeding frequency in config."
+    - Limit total bee population; use fewer hives with higher efficiency.
+    - Avoid chunkloading massive bee farms.
+    - Reduce bee spawn rates and breeding frequency in config.
     pitfalls:
-      - "Massive bee farms with hundreds/thousands of bees loaded."
+    - Massive bee farms with hundreds/thousands of bees loaded.
     extra_checks:
-      - "Entity breakdown showing high bee counts"
-      - "Ticking block entity counts"
-
+    - Entity breakdown showing high bee counts
+    - Ticking block entity counts
+    modid: productivebees
   twilightforest:
-    display_name: "The Twilight Forest"
+    display_name: The Twilight Forest
     match:
-      - "twilightforest"
-      - "twilight forest"
-      - "regex:(?i)twilight\\s*forest"
+    - twilightforest
+    - twilight forest
+    - regex:(?i)twilight\s*forest
     severity: 4
-    tags: ["dimensions", "mobs", "entities", "worldgen", "structures"]
+    tags:
+    - dimensions
+    - mobs
+    - entities
+    - worldgen
+    - structures
     known_issues:
-      - "Dense mobs and boss entities can be performance-heavy."
-      - "Large structures and terrain generation add chunk load costs."
+    - Dense mobs and boss entities can be performance-heavy.
+    - Large structures and terrain generation add chunk load costs.
     symptoms:
-      - "Lag when exploring or fighting in Twilight Forest dimension."
-      - "Entity counts spike with boss battles and dungeon exploration."
+    - Lag when exploring or fighting in Twilight Forest dimension.
+    - Entity counts spike with boss battles and dungeon exploration.
     tweaks:
-      - "Limit concurrent players in Twilight Forest."
-      - "Pregenerate dimension chunks to reduce on-the-fly worldgen cost."
-      - "Reduce mob density in config if available."
+    - Limit concurrent players in Twilight Forest.
+    - Pregenerate dimension chunks to reduce on-the-fly worldgen cost.
+    - Reduce mob density in config if available.
     pitfalls:
-      - "Leaving large portions of Twilight Forest permanently chunkloaded."
+    - Leaving large portions of Twilight Forest permanently chunkloaded.
     extra_checks:
-      - "Per-dimension performance metrics"
-      - "Entity counts by dimension"
-
+    - Per-dimension performance metrics
+    - Entity counts by dimension
+    modid: twilightforest
   aquaculture:
-    display_name: "Aquaculture"
+    display_name: Aquaculture
     match:
-      - "aquaculture"
-      - "regex:(?i)\\baquaculture\\b"
+    - aquaculture
+    - regex:(?i)\baquaculture\b
     severity: 3
-    tags: ["mobs", "entities"]
+    tags:
+    - mobs
+    - entities
     known_issues:
-      - "Additional fish entities and water creatures add to entity simulation."
+    - Additional fish entities and water creatures add to entity simulation.
     symptoms:
-      - "Higher entity counts near water bodies."
+    - Higher entity counts near water bodies.
     tweaks:
-      - "Reduce fish spawn rates if configurable."
-      - "Avoid large water-heavy chunkloaded areas."
+    - Reduce fish spawn rates if configurable.
+    - Avoid large water-heavy chunkloaded areas.
     pitfalls:
-      - "Large fish farms or ocean chunks always loaded."
-
+    - Large fish farms or ocean chunks always loaded.
+    modid: aquaculture
   naturalist:
-    display_name: "Naturalist"
+    display_name: Naturalist
     match:
-      - "naturalist"
-      - "regex:(?i)\\bnaturalist\\b"
+    - naturalist
+    - regex:(?i)\bnaturalist\b
     severity: 3
-    tags: ["mobs", "entities", "ai_pathfinding"]
+    tags:
+    - mobs
+    - entities
+    - ai_pathfinding
     known_issues:
-      - "Additional animals and creatures add to entity simulation cost."
+    - Additional animals and creatures add to entity simulation cost.
     symptoms:
-      - "Increased entity counts in natural biomes."
+    - Increased entity counts in natural biomes.
     tweaks:
-      - "Reduce spawn rates in config."
-      - "Limit chunkloaded wilderness areas."
+    - Reduce spawn rates in config.
+    - Limit chunkloaded wilderness areas.
     pitfalls:
-      - "Stacking with other mob-adding mods."
-
+    - Stacking with other mob-adding mods.
+    modid: naturalist
   betteranimalsplus:
-    display_name: "Better Animals Plus"
+    display_name: Better Animals Plus
     match:
-      - "betteranimalsplus"
-      - "better animals plus"
-      - "regex:(?i)better\\s*animals"
+    - betteranimalsplus
+    - better animals plus
+    - regex:(?i)better\s*animals
     severity: 3
-    tags: ["mobs", "entities", "ai_pathfinding"]
+    tags:
+    - mobs
+    - entities
+    - ai_pathfinding
     known_issues:
-      - "Additional animal types and behaviors increase entity simulation."
-      - "Some animals have complex AI (bears, wolves, etc.)."
+    - Additional animal types and behaviors increase entity simulation.
+    - Some animals have complex AI (bears, wolves, etc.).
     symptoms:
-      - "Higher entity counts in wilderness areas."
+    - Higher entity counts in wilderness areas.
     tweaks:
-      - "Reduce spawn weights in config."
-      - "Disable problematic animals if causing issues."
+    - Reduce spawn weights in config.
+    - Disable problematic animals if causing issues.
     pitfalls:
-      - "Chunkloading large wilderness with many spawns."
-
+    - Chunkloading large wilderness with many spawns.
+    modid: betteranimalsplus
   mowziesmobs:
-    display_name: "Mowzie's Mobs"
+    display_name: Mowzie's Mobs
     match:
-      - "mowziesmobs"
-      - "mowzie's mobs"
-      - "mowzies mobs"
-      - "regex:(?i)mowzie'?s\\s*mobs"
+    - mowziesmobs
+    - mowzie's mobs
+    - mowzies mobs
+    - regex:(?i)mowzie'?s\s*mobs
     severity: 4
-    tags: ["mobs", "entities", "ai_pathfinding"]
+    tags:
+    - mobs
+    - entities
+    - ai_pathfinding
     known_issues:
-      - "Boss mobs and unique creatures have complex AI and animations."
-      - "Can be performance-heavy when multiple instances are active."
+    - Boss mobs and unique creatures have complex AI and animations.
+    - Can be performance-heavy when multiple instances are active.
     symptoms:
-      - "Lag during boss battles or in areas with Mowzie's mobs."
+    - Lag during boss battles or in areas with Mowzie's mobs.
     tweaks:
-      - "Reduce spawn rates for boss/heavy mobs."
-      - "Avoid chunkloading areas with multiple bosses."
+    - Reduce spawn rates for boss/heavy mobs.
+    - Avoid chunkloading areas with multiple bosses.
     pitfalls:
-      - "Multiple boss fights in loaded chunks simultaneously."
-
-  critters_and_companions:
-    display_name: "Critters and Companions"
+    - Multiple boss fights in loaded chunks simultaneously.
+    modid: mowziesmobs
+  crittersandcompanions:
+    display_name: Critters and Companions
     match:
-      - "crittersandcompanions"
-      - "critters_and_companions"
-      - "critters and companions"
-      - "regex:(?i)critters\\s*and\\s*companions"
+    - crittersandcompanions
+    - critters_and_companions
+    - critters and companions
+    - regex:(?i)critters\s*and\s*companions
     severity: 3
-    tags: ["mobs", "entities"]
+    tags:
+    - mobs
+    - entities
     known_issues:
-      - "Additional passive mobs add to entity counts."
+    - Additional passive mobs add to entity counts.
     symptoms:
-      - "Increased entities in various biomes."
+    - Increased entities in various biomes.
     tweaks:
-      - "Reduce spawn rates if experiencing entity pressure."
+    - Reduce spawn rates if experiencing entity pressure.
     pitfalls:
-      - "High spawn rates with other mob mods."
-
+    - High spawn rates with other mob mods.
+    modid: crittersandcompanions
   ars_nouveau:
-    display_name: "Ars Nouveau"
+    display_name: Ars Nouveau
     match:
-      - "ars_nouveau"
-      - "ars nouveau"
-      - "regex:(?i)ars\\s*nouveau"
+    - ars_nouveau
+    - ars nouveau
+    - regex:(?i)ars\s*nouveau
     severity: 3
-    tags: ["automation", "entities", "ticking_block_entities"]
+    tags:
+    - automation
+    - entities
+    - ticking_block_entities
     known_issues:
-      - "Spell turrets, glyph automation, and persistent effects can add tick cost at scale."
+    - Spell turrets, glyph automation, and persistent effects can add tick cost at scale.
     symptoms:
-      - "Lag near bases with many spell turrets / automation blocks."
-      - "Tick spikes correlated with frequent spell casting."
+    - Lag near bases with many spell turrets / automation blocks.
+    - Tick spikes correlated with frequent spell casting.
     tweaks:
-      - "Reduce number of always-active turrets; use redstone gating / conditional activation."
-      - "Avoid massive farms relying on continuous spell effects."
+    - Reduce number of always-active turrets; use redstone gating / conditional activation.
+    - Avoid massive farms relying on continuous spell effects.
     pitfalls:
-      - "Dozens of turrets in chunkloaded areas."
+    - Dozens of turrets in chunkloaded areas.
     extra_checks:
-      - "Tick spike timing and location"
-
+    - Tick spike timing and location
+    modid: ars_nouveau
   botania:
-    display_name: "Botania"
+    display_name: Botania
     match:
-      - "botania"
-      - "regex:(?i)\\bbotania\\b"
+    - botania
+    - regex:(?i)\bbotania\b
     severity: 3
-    tags: ["automation", "ticking_block_entities", "entities"]
+    tags:
+    - automation
+    - ticking_block_entities
+    - entities
     known_issues:
-      - "Large automation setups (mana spreaders, corporea, item logistics) can add overhead."
+    - Large automation setups (mana spreaders, corporea, item logistics) can add overhead.
     symptoms:
-      - "Lag near high-density Botania automation."
+    - Lag near high-density Botania automation.
     tweaks:
-      - "Reduce item spam and redundant spreaders; simplify networks."
-      - "Gate farms with redstone and avoid continuous operation."
+    - Reduce item spam and redundant spreaders; simplify networks.
+    - Gate farms with redstone and avoid continuous operation.
     pitfalls:
-      - "High-speed item transport everywhere."
+    - High-speed item transport everywhere.
     extra_checks:
-      - "Item entities in world"
-      - "Tile entity counts in base"
-
-  twilight_forest:
-    display_name: "The Twilight Forest"
-    match:
-      - "twilightforest"
-      - "twilight forest"
-      - "regex:(?i)twilight\\s*forest"
-    severity: 3
-    tags: ["dimensions", "worldgen", "structures"]
-    known_issues:
-      - "Dimension worldgen can be heavy during exploration."
-      - "Structure-heavy generation can cause spikes on first visit."
-    symptoms:
-      - "Tick spikes when players explore new areas in the dimension."
-    tweaks:
-      - "Pregenerate popular dimensions if your pack encourages exploration."
-      - "Encourage players to avoid mass exploration during peak hours."
-    pitfalls:
-      - "Many players simultaneously exploring new terrain."
-    extra_checks:
-      - "Chunk generation indicators"
-      - "Playercount during spikes"
-
+    - Item entities in world
+    - Tile entity counts in base
+    modid: botania
   blue_skies:
-    display_name: "Blue Skies"
+    display_name: Blue Skies
     match:
-      - "blue_skies"
-      - "blue skies"
-      - "regex:(?i)blue\\s*skies"
+    - blue_skies
+    - blue skies
+    - regex:(?i)blue\s*skies
     severity: 3
-    tags: ["dimensions", "worldgen", "structures"]
+    tags:
+    - dimensions
+    - worldgen
+    - structures
     known_issues:
-      - "Exploration-heavy dimension worldgen and structures can cause spikes."
+    - Exploration-heavy dimension worldgen and structures can cause spikes.
     symptoms:
-      - "Lag during fresh chunk generation in Blue Skies dimensions."
+    - Lag during fresh chunk generation in Blue Skies dimensions.
     tweaks:
-      - "Pregenerate if the pack pushes frequent exploration."
-      - "Tune structure density if configurable."
+    - Pregenerate if the pack pushes frequent exploration.
+    - Tune structure density if configurable.
     pitfalls:
-      - "Large-scale exploration events with many players."
+    - Large-scale exploration events with many players.
     extra_checks:
-      - "Chunkgen vs steady-state tick cost"
-
-  the_undergarden:
-    display_name: "The Undergarden"
+    - Chunkgen vs steady-state tick cost
+    modid: blue_skies
+  undergarden:
+    display_name: The Undergarden
     match:
-      - "undergarden"
-      - "the undergarden"
-      - "regex:(?i)under\\s*garden"
+    - undergarden
+    - the undergarden
+    - regex:(?i)under\s*garden
+    - the_undergarden
     severity: 3
-    tags: ["dimensions", "worldgen", "mobs", "entities"]
+    tags:
+    - dimensions
+    - worldgen
+    - mobs
+    - entities
     known_issues:
-      - "Dimension exploration and custom mobs increase simulation cost during discovery."
+    - Dimension exploration and custom mobs increase simulation cost during discovery.
     symptoms:
-      - "Tick spikes when exploring new Undergarden regions."
+    - Tick spikes when exploring new Undergarden regions.
     tweaks:
-      - "Pregenerate if dimension is heavily used."
-      - "Tune mob spawn rates if the mod provides config options."
+    - Pregenerate if dimension is heavily used.
+    - Tune mob spawn rates if the mod provides config options.
     pitfalls:
-      - "Chunkloading wilderness in dimension."
+    - Chunkloading wilderness in dimension.
     extra_checks:
-      - "Entity count in dimension"
-      - "Chunkgen rate"
-
-  ad_astra:
-    display_name: "Ad Astra"
+    - Entity count in dimension
+    - Chunkgen rate
+    modid: undergarden
+  adastra:
+    display_name: Ad Astra
     match:
-      - "ad_astra"
-      - "adastra"
-      - "regex:(?i)ad\\s*astra"
+    - adastra
+    - ad_astra
+    - regex:(?i)ad\s*astra
     severity: 3
-    tags: ["dimensions", "worldgen", "machines", "ticking_block_entities"]
+    tags:
+    - dimensions
+    - worldgen
+    - machines
+    - ticking_block_entities
     known_issues:
-      - "Dimension and structure generation during exploration; machines can add overhead in bases."
+    - Dimension and structure generation during exploration; machines can add overhead in bases.
     symptoms:
-      - "Spikes during exploration; steady tick cost near bases with lots of machines."
+    - Spikes during exploration; steady tick cost near bases with lots of machines.
     tweaks:
-      - "Pregenerate if exploration is frequent."
-      - "Avoid massive machine clusters in chunkloaded areas."
+    - Pregenerate if exploration is frequent.
+    - Avoid massive machine clusters in chunkloaded areas.
     pitfalls:
-      - "Many players exploring planets simultaneously."
+    - Many players exploring planets simultaneously.
     extra_checks:
-      - "Playercount and chunkgen correlation"
-
-  yung_structures:
-    display_name: "YUNG's Structure Mods (collection)"
+    - Playercount and chunkgen correlation
+    modid: adastra
+  yungs:
+    display_name: YUNG's Structure Mods (collection)
     match:
-      - "yungsbetter"
-      - "yungs"
-      - "regex:(?i)\\byung'?s\\b"
+    - yungs
+    - yungsbetter
+    - regex:(?i)\byung'?s\b
+    - yung_structures
     severity: 4
-    tags: ["structures", "worldgen", "chunkgen"]
+    tags:
+    - structures
+    - worldgen
+    - chunkgen
     known_issues:
-      - "Structure-heavy worldgen can increase chunk generation time and cause first-visit spikes."
+    - Structure-heavy worldgen can increase chunk generation time and cause first-visit spikes.
     symptoms:
-      - "Lag spikes aligned with exploration and new chunk generation."
+    - Lag spikes aligned with exploration and new chunk generation.
     tweaks:
-      - "Reduce structure frequency where configs allow."
-      - "Pregenerate overworld/nether/end depending on pack usage."
+    - Reduce structure frequency where configs allow.
+    - Pregenerate overworld/nether/end depending on pack usage.
     pitfalls:
-      - "Multiple structure mods stacked at high density."
+    - Multiple structure mods stacked at high density.
     extra_checks:
-      - "Chunkgen spike indicators"
-      - "Player exploration patterns"
-
-  when_dungeons_arise:
-    display_name: "When Dungeons Arise"
+    - Chunkgen spike indicators
+    - Player exploration patterns
+    modid: yungs
+  whendungeonsarise:
+    display_name: When Dungeons Arise
     match:
-      - "whendungeonsarise"
-      - "when dungeons arise"
-      - "regex:(?i)when\\s*dungeons\\s*arise"
+    - whendungeonsarise
+    - when dungeons arise
+    - regex:(?i)when\s*dungeons\s*arise
+    - when_dungeons_arise
     severity: 4
-    tags: ["structures", "worldgen", "chunkgen"]
+    tags:
+    - structures
+    - worldgen
+    - chunkgen
     known_issues:
-      - "Large structures can heavily impact chunk generation time."
+    - Large structures can heavily impact chunk generation time.
     symptoms:
-      - "Noticeable lag during exploration / flying at high speed."
+    - Noticeable lag during exploration / flying at high speed.
     tweaks:
-      - "Lower structure generation frequency if configurable."
-      - "Pregenerate chunks for servers with frequent exploration."
+    - Lower structure generation frequency if configurable.
+    - Pregenerate chunks for servers with frequent exploration.
     pitfalls:
-      - "Players using elytra/fast travel generating many chunks quickly."
+    - Players using elytra/fast travel generating many chunks quickly.
     extra_checks:
-      - "Chunk load/generation rates"
-
-  terralith_like_worldgen:
-    display_name: "Heavy Worldgen Mods (generic rule)"
+    - Chunk load/generation rates
+    modid: whendungeonsarise
+  byg:
+    display_name: Heavy Worldgen Mods (generic rule)
     match:
-      - "biomesoplenty"
-      - "biomes o plenty"
-      - "byg"
-      - "oh the biomes you'll go"
-      - "regions_unexplored"
-      - "tectonic"
-      - "regex:(?i)biomes\\s*o\\s*plenty|regions\\s*unexplored|oh\\s*the\\s*biomes"
+    - byg
+    - biomesoplenty
+    - biomes o plenty
+    - oh the biomes you'll go
+    - regions_unexplored
+    - tectonic
+    - regex:(?i)biomes\s*o\s*plenty|regions\s*unexplored|oh\s*the\s*biomes
+    - terralith_like_worldgen
     severity: 4
-    tags: ["worldgen", "chunkgen", "structures"]
+    tags:
+    - worldgen
+    - chunkgen
+    - structures
     known_issues:
-      - "Worldgen complexity increases per-chunk generation time."
-      - "Stacking multiple biome/terrain mods increases noise + feature generation cost."
+    - Worldgen complexity increases per-chunk generation time.
+    - Stacking multiple biome/terrain mods increases noise + feature generation cost.
     symptoms:
-      - "TPS drops during exploration, improves when players stay in pre-generated areas."
+    - TPS drops during exploration, improves when players stay in pre-generated areas.
     tweaks:
-      - "Pregenerate the overworld; avoid generating new chunks during peak hours."
-      - "Reduce extra feature/structure density where the mods provide configs."
-      - "Avoid stacking too many overlapping worldgen/structure mods."
+    - Pregenerate the overworld; avoid generating new chunks during peak hours.
+    - Reduce extra feature/structure density where the mods provide configs.
+    - Avoid stacking too many overlapping worldgen/structure mods.
     pitfalls:
-      - "Many players exploring new terrain simultaneously."
+    - Many players exploring new terrain simultaneously.
     extra_checks:
-      - "Correlation between lag and chunk generation"
-
+    - Correlation between lag and chunk generation
+    modid: byg
 patterns:
-  # Patterns are generic server symptoms. Your matcher should:
-  # - Check conditions against whatever metrics exist (tps/mspt/gc/counts).
-  # - Add a signal entry and tag suggestions to feed suspect scoring.
-
-  - id: "low_tps"
-    weight: 5
-    tags: ["misc"]
-    explanation: "Server TPS is below healthy threshold."
-    conditions:
-      any:
-        - metric: "tps.recent"
-          op: "<"
-          value_ref: "thresholds.tps_warn"
-
-  - id: "bad_tps"
-    weight: 8
-    tags: ["misc"]
-    explanation: "Server TPS is severely low."
-    conditions:
-      any:
-        - metric: "tps.recent"
-          op: "<"
-          value_ref: "thresholds.tps_bad"
-
-  - id: "high_mspt"
-    weight: 6
-    tags: ["misc"]
-    explanation: "MSPT is elevated (tick time > 50ms implies TPS loss)."
-    conditions:
-      any:
-        - metric: "tick.mspt"
-          op: ">"
-          value_ref: "thresholds.mspt_warn"
-
-  - id: "severe_mspt"
-    weight: 9
-    tags: ["misc"]
-    explanation: "MSPT is severely elevated (heavy server lag)."
-    conditions:
-      any:
-        - metric: "tick.mspt"
-          op: ">"
-          value_ref: "thresholds.mspt_bad"
-
-  - id: "chunk_pressure"
-    weight: 6
-    tags: ["chunk_loading", "memory_pressure"]
-    explanation: "Loaded chunk count is high; chunk simulation and memory use likely elevated."
-    conditions:
-      any:
-        - metric: "world.loaded_chunks"
-          op: ">"
-          value_ref: "thresholds.loaded_chunks_warn"
-
-  - id: "severe_chunk_pressure"
-    weight: 9
-    tags: ["chunk_loading", "memory_pressure"]
-    explanation: "Loaded chunk count is extremely high; strong suspect for TPS issues."
-    conditions:
-      any:
-        - metric: "world.loaded_chunks"
-          op: ">"
-          value_ref: "thresholds.loaded_chunks_bad"
-
-  - id: "entity_pressure"
-    weight: 6
-    tags: ["entities", "mobs", "ai_pathfinding"]
-    explanation: "Entity count is high; entity simulation likely a major tick cost."
-    conditions:
-      any:
-        - metric: "world.entities_total"
-          op: ">"
-          value_ref: "thresholds.entities_warn"
-
-  - id: "severe_entity_pressure"
-    weight: 9
-    tags: ["entities", "mobs", "ai_pathfinding"]
-    explanation: "Entity count is extremely high."
-    conditions:
-      any:
-        - metric: "world.entities_total"
-          op: ">"
-          value_ref: "thresholds.entities_bad"
-
-  - id: "tile_entity_pressure"
-    weight: 6
-    tags: ["ticking_block_entities", "machines", "automation"]
-    explanation: "Block entity count is high; machines/automation may be driving tick cost."
-    conditions:
-      any:
-        - metric: "world.tile_entities_total"
-          op: ">"
-          value_ref: "thresholds.tile_entities_warn"
-
-  - id: "severe_tile_entity_pressure"
-    weight: 9
-    tags: ["ticking_block_entities", "machines", "automation"]
-    explanation: "Block entity count is extremely high."
-    conditions:
-      any:
-        - metric: "world.tile_entities_total"
-          op: ">"
-          value_ref: "thresholds.tile_entities_bad"
-
-  - id: "chunkgen_spikes"
-    weight: 7
-    tags: ["chunkgen", "worldgen", "structures"]
-    explanation: "Tick spikes suggest chunk generation or structure generation under load."
-    conditions:
-      any:
-        - metric: "tick.spike_mspt"
-          op: ">"
-          value_ref: "thresholds.tick_spike_mspt_warn"
-
-  - id: "severe_chunkgen_spikes"
-    weight: 10
-    tags: ["chunkgen", "worldgen", "structures"]
-    explanation: "Severe tick spikes indicate heavy chunk/structure generation or large periodic tasks."
-    conditions:
-      any:
-        - metric: "tick.spike_mspt"
-          op: ">"
-          value_ref: "thresholds.tick_spike_mspt_bad"
-
-  - id: "gc_young_churn"
-    weight: 6
-    tags: ["gc_pressure", "memory_pressure"]
-    explanation: "High young-gen GC suggests frequent allocations (item transport, block updates, automation)."
-    conditions:
-      any:
-        - metric: "gc.young"
-          op: ">"
-          value_ref: "thresholds.gc_young_warn"
-
-  - id: "gc_old_pressure"
-    weight: 7
-    tags: ["gc_pressure", "memory_pressure", "nbt_io"]
-    explanation: "High old-gen GC suggests memory pressure or accumulation (chunks/entities/NBT-heavy storage)."
-    conditions:
-      any:
-        - metric: "gc.old"
-          op: ">"
-          value_ref: "thresholds.gc_old_warn"
-
+- id: low_tps
+  weight: 5
+  tags:
+  - misc
+  explanation: Server TPS is below healthy threshold.
+  conditions:
+    any:
+    - metric: tps.recent
+      op: <
+      value_ref: thresholds.tps_warn
+- id: bad_tps
+  weight: 8
+  tags:
+  - misc
+  explanation: Server TPS is severely low.
+  conditions:
+    any:
+    - metric: tps.recent
+      op: <
+      value_ref: thresholds.tps_bad
+- id: high_mspt
+  weight: 6
+  tags:
+  - misc
+  explanation: MSPT is elevated (tick time > 50ms implies TPS loss).
+  conditions:
+    any:
+    - metric: tick.mspt
+      op: '>'
+      value_ref: thresholds.mspt_warn
+- id: severe_mspt
+  weight: 9
+  tags:
+  - misc
+  explanation: MSPT is severely elevated (heavy server lag).
+  conditions:
+    any:
+    - metric: tick.mspt
+      op: '>'
+      value_ref: thresholds.mspt_bad
+- id: chunk_pressure
+  weight: 6
+  tags:
+  - chunk_loading
+  - memory_pressure
+  explanation: Loaded chunk count is high; chunk simulation and memory use likely elevated.
+  conditions:
+    any:
+    - metric: world.loaded_chunks
+      op: '>'
+      value_ref: thresholds.loaded_chunks_warn
+- id: severe_chunk_pressure
+  weight: 9
+  tags:
+  - chunk_loading
+  - memory_pressure
+  explanation: Loaded chunk count is extremely high; strong suspect for TPS issues.
+  conditions:
+    any:
+    - metric: world.loaded_chunks
+      op: '>'
+      value_ref: thresholds.loaded_chunks_bad
+- id: entity_pressure
+  weight: 6
+  tags:
+  - entities
+  - mobs
+  - ai_pathfinding
+  explanation: Entity count is high; entity simulation likely a major tick cost.
+  conditions:
+    any:
+    - metric: world.entities_total
+      op: '>'
+      value_ref: thresholds.entities_warn
+- id: severe_entity_pressure
+  weight: 9
+  tags:
+  - entities
+  - mobs
+  - ai_pathfinding
+  explanation: Entity count is extremely high.
+  conditions:
+    any:
+    - metric: world.entities_total
+      op: '>'
+      value_ref: thresholds.entities_bad
+- id: tile_entity_pressure
+  weight: 6
+  tags:
+  - ticking_block_entities
+  - machines
+  - automation
+  explanation: Block entity count is high; machines/automation may be driving tick cost.
+  conditions:
+    any:
+    - metric: world.tile_entities_total
+      op: '>'
+      value_ref: thresholds.tile_entities_warn
+- id: severe_tile_entity_pressure
+  weight: 9
+  tags:
+  - ticking_block_entities
+  - machines
+  - automation
+  explanation: Block entity count is extremely high.
+  conditions:
+    any:
+    - metric: world.tile_entities_total
+      op: '>'
+      value_ref: thresholds.tile_entities_bad
+- id: chunkgen_spikes
+  weight: 7
+  tags:
+  - chunkgen
+  - worldgen
+  - structures
+  explanation: Tick spikes suggest chunk generation or structure generation under load.
+  conditions:
+    any:
+    - metric: tick.spike_mspt
+      op: '>'
+      value_ref: thresholds.tick_spike_mspt_warn
+- id: severe_chunkgen_spikes
+  weight: 10
+  tags:
+  - chunkgen
+  - worldgen
+  - structures
+  explanation: Severe tick spikes indicate heavy chunk/structure generation or large periodic tasks.
+  conditions:
+    any:
+    - metric: tick.spike_mspt
+      op: '>'
+      value_ref: thresholds.tick_spike_mspt_bad
+- id: gc_young_churn
+  weight: 6
+  tags:
+  - gc_pressure
+  - memory_pressure
+  explanation: High young-gen GC suggests frequent allocations (item transport, block updates, automation).
+  conditions:
+    any:
+    - metric: gc.young
+      op: '>'
+      value_ref: thresholds.gc_young_warn
+- id: gc_old_pressure
+  weight: 7
+  tags:
+  - gc_pressure
+  - memory_pressure
+  - nbt_io
+  explanation: High old-gen GC suggests memory pressure or accumulation (chunks/entities/NBT-heavy storage).
+  conditions:
+    any:
+    - metric: gc.old
+      op: '>'
+      value_ref: thresholds.gc_old_warn
 scenarios:
-  # Scenarios are higher-level interpretations that combine patterns and mod tags.
-  # Your matcher can evaluate these after base patterns and use them to boost suspect confidence.
-
-  - id: "exploration_worldgen_lag"
-    name: "Exploration / worldgen-driven lag"
-    when_all_patterns:
-      - "chunkgen_spikes"
-    when_any_patterns:
-      - "low_tps"
-      - "high_mspt"
-    suspect_tags: ["worldgen", "structures", "chunkgen", "dimensions"]
-    recommendations:
-      - "Pregenerate chunks for the overworld and any heavily-used dimensions."
-      - "Reduce structure density / frequency in worldgen-related configs where possible."
-      - "Discourage mass exploration during peak hours; schedule pregeneration off-hours."
-    missing_data_hints:
-      - "world.loaded_chunks"
-      - "player.online"
-      - "tick.spike_mspt"
-
-  - id: "base_automation_lag"
-    name: "Base automation / machines-driven lag"
-    when_any_patterns:
-      - "tile_entity_pressure"
-      - "gc_young_churn"
-    when_any_patterns_2:
-      - "low_tps"
-      - "high_mspt"
-    suspect_tags: ["machines", "automation", "ticking_block_entities", "storage", "logistics"]
-    recommendations:
-      - "Identify the heaviest bases; reduce machine density and always-on transfers."
-      - "Consolidate logistics networks and remove redundant exporters/importers."
-      - "Avoid chunkloading huge factories; chunkload only what must be always active."
-    missing_data_hints:
-      - "world.tile_entities_total"
-      - "world.entities_total"
-      - "tick.mspt"
-
-  - id: "mob_ai_lag"
-    name: "Mob / AI pathfinding-driven lag"
-    when_any_patterns:
-      - "entity_pressure"
-    when_any_patterns_2:
-      - "low_tps"
-      - "high_mspt"
-    suspect_tags: ["mobs", "entities", "ai_pathfinding"]
-    recommendations:
-      - "Reduce spawn rates for heavy mob mods; cap populations if supported."
-      - "Optimize mob farms and pens; reduce pathfinding obstacles and over-crowding."
-      - "Avoid chunkloading mob-heavy areas."
-    missing_data_hints:
-      - "world.entities_total"
-      - "world.entities_by_type"
-
-  - id: "memory_pressure_lag"
-    name: "Memory pressure / GC-driven lag"
-    when_any_patterns:
-      - "gc_old_pressure"
-      - "gc_young_churn"
-    when_any_patterns_2:
-      - "low_tps"
-      - "high_mspt"
-    suspect_tags: ["memory_pressure", "gc_pressure", "nbt_io", "storage", "chunk_loading"]
-    recommendations:
-      - "If old-gen pressure is high, reduce chunk/entity accumulation and review storage/NBT-heavy systems."
-      - "If young-gen churn is high, reduce rapid item transfer loops and extremely chatty automation."
-      - "Review JVM memory sizing and GC tuning appropriate to your environment."
-    missing_data_hints:
-      - "gc.young"
-      - "gc.old"
-      - "world.loaded_chunks"
-      - "world.entities_total"
-
+- id: exploration_worldgen_lag
+  name: Exploration / worldgen-driven lag
+  when_all_patterns:
+  - chunkgen_spikes
+  when_any_patterns:
+  - low_tps
+  - high_mspt
+  suspect_tags:
+  - worldgen
+  - structures
+  - chunkgen
+  - dimensions
+  recommendations:
+  - Pregenerate chunks for the overworld and any heavily-used dimensions.
+  - Reduce structure density / frequency in worldgen-related configs where possible.
+  - Discourage mass exploration during peak hours; schedule pregeneration off-hours.
+  missing_data_hints:
+  - world.loaded_chunks
+  - player.online
+  - tick.spike_mspt
+- id: base_automation_lag
+  name: Base automation / machines-driven lag
+  when_any_patterns:
+  - tile_entity_pressure
+  - gc_young_churn
+  when_any_patterns_2:
+  - low_tps
+  - high_mspt
+  suspect_tags:
+  - machines
+  - automation
+  - ticking_block_entities
+  - storage
+  - logistics
+  recommendations:
+  - Identify the heaviest bases; reduce machine density and always-on transfers.
+  - Consolidate logistics networks and remove redundant exporters/importers.
+  - Avoid chunkloading huge factories; chunkload only what must be always active.
+  missing_data_hints:
+  - world.tile_entities_total
+  - world.entities_total
+  - tick.mspt
+- id: mob_ai_lag
+  name: Mob / AI pathfinding-driven lag
+  when_any_patterns:
+  - entity_pressure
+  when_any_patterns_2:
+  - low_tps
+  - high_mspt
+  suspect_tags:
+  - mobs
+  - entities
+  - ai_pathfinding
+  recommendations:
+  - Reduce spawn rates for heavy mob mods; cap populations if supported.
+  - Optimize mob farms and pens; reduce pathfinding obstacles and over-crowding.
+  - Avoid chunkloading mob-heavy areas.
+  missing_data_hints:
+  - world.entities_total
+  - world.entities_by_type
+- id: memory_pressure_lag
+  name: Memory pressure / GC-driven lag
+  when_any_patterns:
+  - gc_old_pressure
+  - gc_young_churn
+  when_any_patterns_2:
+  - low_tps
+  - high_mspt
+  suspect_tags:
+  - memory_pressure
+  - gc_pressure
+  - nbt_io
+  - storage
+  - chunk_loading
+  recommendations:
+  - If old-gen pressure is high, reduce chunk/entity accumulation and review storage/NBT-heavy systems.
+  - If young-gen churn is high, reduce rapid item transfer loops and extremely chatty automation.
+  - Review JVM memory sizing and GC tuning appropriate to your environment.
+  missing_data_hints:
+  - gc.young
+  - gc.old
+  - world.loaded_chunks
+  - world.entities_total
 matching_hints:
-  # Optional helper data for your parser/matcher implementation.
-  # These are not rules; they are suggestions for "normalized metric names" your parser can emit
-  # so the rule engine stays stable even if Spark changes field paths.
-
   normalized_metrics_expected:
-    - "tps.recent"
-    - "tps.average"
-    - "tick.mspt"
-    - "tick.spike_mspt"
-    - "gc.young"
-    - "gc.old"
-    - "player.online"
-    - "world.loaded_chunks"
-    - "world.entities_total"
-    - "world.tile_entities_total"
-    - "world.entities_by_type"
-    - "world.tile_entities_by_type"
-
+  - tps.recent
+  - tps.average
+  - tick.mspt
+  - tick.spike_mspt
+  - gc.young
+  - gc.old
+  - player.online
+  - world.loaded_chunks
+  - world.entities_total
+  - world.tile_entities_total
+  - world.entities_by_type
+  - world.tile_entities_by_type
   confidence_scoring_suggestion:
-    - "Base confidence from matched patterns (sum weight) + mod severity when mod present."
-    - "Boost if scenario matches and mod tags overlap scenario suspect_tags."
-    - "Penalty if key metrics are missing (e.g., entities/chunks/mspt)."
+  - Base confidence from matched patterns (sum weight) + mod severity when mod present.
+  - Boost if scenario matches and mod tags overlap scenario suspect_tags.
+  - Penalty if key metrics are missing (e.g., entities/chunks/mspt).
+meta:
+  updated: '2026-01-21'
+  notes: Mod IDs normalized to match parsed_spark.json mods dict keys (modid -> version). Added entity diagnostics rules.
+entities:
+  thresholds:
+    total_warn: 2500
+    total_crit: 5000
+    unique_warn: 250
+    per_type_warn: 300
+    per_type_crit: 800
+  mod_sources:
+    alexsmobs:
+      match_entities:
+      - alexsmobs:*
+      why: Many ambient mobs + special spawners can inflate passive counts, especially in chunkloaded areas.
+      tweaks:
+      - 'Lower spawn weights/caps in Alex''s Mobs config (common: reduce ambient/passive groups, disable biome-specific extra
+        spawns).'
+      - Disable or nerf spawners/structures if enabled in your pack (check Alex's Mobs config options for features/structures).
+      - If you use chunk loaders, ensure mob farms/animal pens aren't chunkloaded 24/7.
+    iceandfire:
+      match_entities:
+      - iceandfire:*
+      why: Large AI mobs (dragons, cyclops, etc.) + pathfinding-heavy behaviors can spike entity tick time and grow counts
+        in wild areas.
+      tweaks:
+      - Reduce worldgen spawn rates / caps for dragons and other large mobs in Ice and Fire config.
+      - Disable/limit roosts/nests/structures if your world has dense generation.
+      - Increase despawn aggressiveness for non-persistent mobs where possible (config).
+      - Avoid keeping many large Ice and Fire mobs loaded near bases; move them to unloaded dimensions/areas.
+    minecolonies:
+      match_entities:
+      - minecolonies:*
+      why: Colonists are entities with AI/job logic; large colonies add steady entity tick load and pathfinding.
+      tweaks:
+      - Limit colony size (citizen cap) and avoid multiple large colonies near spawn.
+      - Reduce scan/range/pathfinding workload by keeping roads clear and using simpler layouts.
+      - Avoid chunkloading whole colonies; chunkload only what you need.
+    create:
+      match_entities:
+      - create:*
+      why: Contraptions can involve entity-like moving parts and many block entities; excessive moving contraptions can behave
+        like entity load.
+      tweaks:
+      - Keep contraptions from running constantly (use redstone timers/controls).
+      - Avoid huge moving contraptions spanning many chunks.
+      - Prefer stationary processing over long-distance moving machines when possible.
+    mekanism:
+      match_entities:
+      - mekanism:*
+      why: Not usually entity-heavy, but some machines and mobs (if addons) can indirectly increase load; also tends to amplify
+        base complexity.
+      tweaks:
+      - If using Mekanism lasers/digital miners, avoid running them constantly in loaded chunks.
+      - Cap chunkloading around massive factories; spread across dimensions/areas.
+    botania:
+      match_entities:
+      - botania:*
+      why: Mana spreaders and item entities from farms can increase entity counts if item collection is inefficient.
+      tweaks:
+      - Use item collection (hoppers/vacuum) to prevent item entities accumulating.
+      - Avoid excessive open-air automated farms producing loose items.
+    ars_nouveau:
+      match_entities:
+      - ars_nouveau:*
+      why: Automation can spill lots of item entities; some spells create persistent entities/particles depending on configs.
+      tweaks:
+      - Tune automation to avoid item overflow; ensure collectors are sized for peak output.
+      - Avoid always-on spell turrets or large areas with many persistent spell entities.
+    twilightforest:
+      match_entities:
+      - twilightforest:*
+      why: Dense mob spawns in the dimension can inflate counts, especially with chunk loaders/players idling.
+      tweaks:
+      - Discourage AFK/idle in Twilight Forest with large render/view distances.
+      - If you have control, reduce mob density via configs/datapacks.
+    ad_astra:
+      match_entities:
+      - ad_astra:*
+      why: Space dimensions can encourage long-distance chunkloading and entities persisting in bases.
+      tweaks:
+      - Minimize chunkloaded bases with farms in space dimensions.
+      - Use tighter mob farm controls and faster item cleanup.
+  rules:
+  - id: entities_total_high
+    description: Total entity count is high (overall).
+    when:
+      metric: entities.total
+      op: '>='
+      value: thresholds.total_warn
+    severity: warn
+    advice:
+    - Look for AFK farms, animal pens, or mob grinders that are staying loaded.
+    - Check 'entities.top' for the biggest offenders by type and address those first.
+    - If you use chunk loaders, verify they're not keeping farms, colonies, or dense wild areas loaded 24/7.
+  - id: entities_total_critical
+    description: Total entity count is extremely high (overall).
+    when:
+      metric: entities.total
+      op: '>='
+      value: thresholds.total_crit
+    severity: crit
+    advice:
+    - Temporarily disable chunk loaders and re-test; chunkloaded farms are the usual culprit.
+    - Cull passive mobs (animals/villagers) near spawn and major bases; enforce caps.
+    - Consider server view-distance/simulation-distance reductions and entity activation range tuning (server configs).
+  - id: entities_unique_high
+    description: Too many unique entity types (often indicates many mods/dimensions loaded or lots of niche spawns).
+    when:
+      metric: entities.unique
+      op: '>='
+      value: thresholds.unique_warn
+    severity: warn
+    advice:
+    - If the top list includes many modded mobs, reduce spawn rates/caps for those mods.
+    - Avoid keeping multiple dimensions loaded (portals + chunk loaders).
+  - id: entities_modded_hotspot
+    description: A specific mod's entities dominate the top list.
+    when:
+      type: heuristic
+      name: dominant_mod_entities
+    severity: warn
+    advice:
+    - If one mod accounts for a large share of entities, tune that mod's spawn rates/caps and check for always-loaded areas
+      where those mobs are spawning.
+    - If the mod is tied to a specific dimension/biome, reduce player idle time there or adjust worldgen/spawn configs.
