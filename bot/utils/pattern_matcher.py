@@ -46,7 +46,8 @@ def _load_rules() -> dict[str, Any]:
             if not rules_url.endswith('.yml'):
                 warnings.warn(
                     f"SPARK_RULES_URL should end with .yml, got: {rules_url}. "
-                    "Proceeding anyway..."
+                    "Proceeding anyway...",
+                    stacklevel=2
                 )
             
             with urllib.request.urlopen(rules_url, timeout=10) as response:
@@ -56,7 +57,8 @@ def _load_rules() -> dict[str, Any]:
             import warnings
             warnings.warn(
                 f"Failed to load rules from URL '{rules_url}': {e}. "
-                "Falling back to local rules.yml"
+                "Falling back to local rules.yml",
+                stacklevel=2
             )
             # Fall through to local file
     
@@ -116,7 +118,7 @@ def _matches_mod(mod_name: str, pattern: str) -> bool:
             # Log the error for debugging but don't crash
             # In production, this should use proper logging
             import warnings
-            warnings.warn(f"Invalid regex pattern '{regex_pattern}': {e}")
+            warnings.warn(f"Invalid regex pattern '{regex_pattern}': {e}", stacklevel=2)
             return False
     
     # Case-insensitive substring match
