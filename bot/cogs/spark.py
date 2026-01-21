@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Optional
 
 import aiohttp
 import discord
@@ -20,14 +19,16 @@ from ..db.models import UserCredential
 from ..utils.spark import analyze_spark_report, format_discord_report
 
 
-async def get_user_token_for_panel(user_id: int, panel_url: str) -> Optional[str]:
+async def get_user_token_for_panel(user_id: int, panel_url: str) -> str | None:
     """Get user's API token for a specific panel."""
     async with SessionLocal() as s:
         from ..services.credentials import get_user_token
         return await get_user_token(s, user_id, panel_url)
 
 
-async def resolve_identifier_and_panel(user_id: int, value: str) -> tuple[Optional[str], Optional[str]]:
+async def resolve_identifier_and_panel(
+    user_id: int, value: str
+) -> tuple[str | None, str | None]:
     """
     Resolve a server identifier (alias, UUID, or name) to a UUID and panel URL.
     
@@ -203,7 +204,8 @@ class SparkCog(commands.Cog):
             uuid, panel = await resolve_identifier_and_panel(interaction.user.id, server)
             if not uuid or not panel:
                 await interaction.followup.send(
-                    "❌ Server not found for your linked panels. Try `/link` or specify the correct alias.",
+                    "❌ Server not found for your linked panels. "
+                    "Try `/link` or specify the correct alias.",
                     ephemeral=True
                 )
                 return
