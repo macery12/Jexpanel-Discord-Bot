@@ -286,6 +286,7 @@ mods:
     modid: iceandfire
   citadel:
     display_name: Alex's Mobs
+    modid: alexsmobs
     match:
     - citadel
     - alexsmobs
@@ -971,7 +972,7 @@ entities:
     per_type_warn: 300
     per_type_crit: 800
   mod_sources:
-    alexsmobs:
+    citadel:
       match_entities:
       - alexsmobs:*
       why: Many ambient mobs + special spawners can inflate passive counts, especially in chunkloaded areas.

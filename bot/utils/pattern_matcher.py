@@ -678,10 +678,32 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         entity_suspects = _build_entity_suspects(
             entity_analysis, detected_mods, matched_patterns
         )
-        # Merge with existing suspects, avoiding duplicates
-        existing_mod_keys = {s.get("mod_key") for s in suspects}
+        # Merge with existing suspects
+        existing_mod_keys = {s.get("mod_key"): i for i, s in enumerate(suspects)}
         for entity_suspect in entity_suspects:
-            if entity_suspect.get("mod_key") not in existing_mod_keys:
+            mod_key = entity_suspect.get("mod_key")
+            if mod_key in existing_mod_keys:
+                # Merge entity data into existing suspect
+                idx = existing_mod_keys[mod_key]
+                existing = suspects[idx]
+                
+                # Add entity-specific reasons
+                entity_reasons = [r for r in entity_suspect.get("reasons", []) 
+                                 if r not in existing.get("reasons", [])]
+                existing["reasons"].extend(entity_reasons)
+                
+                # Boost confidence if entity contribution is significant
+                entity_conf = entity_suspect.get("confidence", 0)
+                if entity_conf > existing.get("confidence", 0):
+                    # Use weighted average, favoring the higher confidence
+                    existing["confidence"] = int(
+                        (existing["confidence"] * 0.6) + (entity_conf * 0.4)
+                    )
+                
+                # Add entity contribution data
+                existing["entity_contribution"] = entity_suspect.get("entity_contribution")
+            else:
+                # New suspect from entity analysis
                 suspects.append(entity_suspect)
         # Re-sort by confidence
         suspects.sort(key=lambda x: x["confidence"], reverse=True)
