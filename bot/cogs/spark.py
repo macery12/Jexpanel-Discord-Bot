@@ -202,11 +202,12 @@ class SparkCog(commands.Cog):
             diagnosis = result.get("diagnosis", {})
             recommendations = diagnosis.get("recommendations", [])
             
-            # Create view with button if there are recommendations
-            view = TweaksButton(recommendations) if recommendations else None
-            
-            # Send the analysis
-            await interaction.followup.send(message, view=view)
+            # Send the analysis with button if there are recommendations
+            if recommendations:
+                view = TweaksButton(recommendations)
+                await interaction.followup.send(message, view=view)
+            else:
+                await interaction.followup.send(message)
             
         except ValueError as e:
             # Handle errors (invalid URL, fetch failures, etc.)
@@ -360,11 +361,12 @@ class SparkCog(commands.Cog):
             diagnosis = result.get("diagnosis", {})
             recommendations = diagnosis.get("recommendations", [])
             
-            # Create view with button if there are recommendations
-            view = TweaksButton(recommendations) if recommendations else None
-            
-            # Send the analysis
-            await interaction.followup.send(message, view=view)
+            # Send the analysis with button if there are recommendations
+            if recommendations:
+                view = TweaksButton(recommendations)
+                await interaction.followup.send(message, view=view)
+            else:
+                await interaction.followup.send(message)
             
         except ValueError as e:
             error_message = f"❌ **Error:**\n{e!s}"
