@@ -1,7 +1,7 @@
 """Add user-specific aliases support
 
 Revision ID: 001_user_aliases
-Revises: 
+Revises: 000_initial_schema
 Create Date: 2026-01-20 14:26:00.000000
 
 """
@@ -12,7 +12,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision = '001_user_aliases'
-down_revision = None
+down_revision = '000_initial_schema'
 branch_labels = None
 depends_on = None
 

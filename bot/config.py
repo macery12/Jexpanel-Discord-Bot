@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     data_key_version: int = Field(default=1, alias="DATA_KEY_VERSION")
     cred_purge_days: int = Field(default=7, alias="CRED_PURGE_DAYS")
 
+    # Spark auto-profiler
+    spark_auto_command: str = Field(
+        default="/spark profiler start --timeout 30 --interval 1",
+        alias="SPARK_AUTO_COMMAND"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
