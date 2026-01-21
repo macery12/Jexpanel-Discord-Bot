@@ -127,8 +127,9 @@ class TestModDetection:
         rules = _load_rules()
         detected = _detect_mods(parsed_data, rules)
         
-        # Should match "ae2" rule
-        assert "applied_energistics_2" in detected
+        # Should match "ae2" rule (using modid match)
+        assert "ae2" in detected
+        assert detected["ae2"]["display_name"] == "Applied Energistics 2 (AE2)"
 
     def test_no_mods(self):
         """Test when no mods are present."""

@@ -147,6 +147,17 @@ def _detect_mods(parsed_data: dict[str, Any], rules: dict[str, Any]) -> dict[str
     # Check each mod in the data against each rule
     for mod_id, mod_version in mods_in_data.items():
         for rule_key, rule_data in mod_rules.items():
+            # First try exact modid match (if available in rule)
+            rule_modid = rule_data.get("modid")
+            if rule_modid and rule_modid == mod_id:
+                detected[rule_key] = {
+                    **rule_data,
+                    "detected_name": mod_id,
+                    "version": mod_version,
+                }
+                break  # Move to next mod
+            
+            # Fall back to pattern matching
             match_patterns = rule_data.get("match", [])
             
             # Check if any pattern matches
@@ -365,6 +376,7 @@ def _build_recommendations(
     matched_patterns: list[dict[str, Any]],
     suspects: list[dict[str, Any]],
     rules: dict[str, Any],
+    entity_analysis: dict[str, Any] | None = None,
 ) -> list[str]:
     """Build list of actionable recommendations.
     
@@ -373,6 +385,7 @@ def _build_recommendations(
         matched_patterns: List of matched patterns
         suspects: List of suspects
         rules: Loaded rules dictionary
+        entity_analysis: Entity breakdown analysis (optional)
         
     Returns:
         List of recommendation strings
@@ -390,6 +403,24 @@ def _build_recommendations(
                 if tweak not in added:
                     recommendations.append(f"**{suspect['name']}**: {tweak}")
                     added.add(tweak)
+    
+    # Add entity-specific tweaks if we have entity contributors
+    if entity_analysis and entity_analysis.get("contributors"):
+        entity_rules = rules.get("entities", {})
+        mod_sources = entity_rules.get("mod_sources", {})
+        
+        for mod_key in entity_analysis["contributors"].keys():
+            if mod_key in mod_sources:
+                source_tweaks = mod_sources[mod_key].get("tweaks", [])
+                for tweak in source_tweaks[:2]:  # Limit entity tweaks
+                    if tweak not in added:
+                        # Find mod display name
+                        mod_name = mod_key
+                        if mod_key in detected_mods:
+                            mod_name = detected_mods[mod_key].get("display_name", mod_key)
+                        
+                        recommendations.append(f"**{mod_name} (entities)**: {tweak}")
+                        added.add(tweak)
     
     # Add common recommendations based on matched pattern tags
     pattern_tags = set()
@@ -463,6 +494,149 @@ def _determine_overall_status(matched_patterns: list[dict[str, Any]]) -> str:
         return "ok"
 
 
+def _analyze_entity_breakdown(
+    parsed_data: dict[str, Any], detected_mods: dict[str, Any], rules: dict[str, Any]
+) -> dict[str, Any]:
+    """Analyze entity breakdown to identify mods contributing to entity counts.
+    
+    Args:
+        parsed_data: Normalized Spark data
+        detected_mods: Dictionary of detected mods
+        rules: Loaded rules dictionary
+        
+    Returns:
+        Dictionary with entity analysis results
+    """
+    entity_data = parsed_data.get("entities", {})
+    top_entities = entity_data.get("top", {})
+    total_entities = entity_data.get("total", 0)
+    
+    if not top_entities or not total_entities:
+        return {}
+    
+    # Get entity rules from rules.yml
+    entity_rules = rules.get("entities", {})
+    mod_sources = entity_rules.get("mod_sources", {})
+    entity_thresholds = entity_rules.get("thresholds", {})
+    
+    # Track which mods are contributing entities
+    mod_entity_contributions = {}
+    
+    for entity_type, count in top_entities.items():
+        # Check each mod_source for matching entity patterns
+        for mod_key, source_data in mod_sources.items():
+            match_entities = source_data.get("match_entities", [])
+            
+            for pattern in match_entities:
+                # Convert wildcard pattern to regex
+                # e.g., "alexsmobs:*" -> "^alexsmobs:.*$"
+                regex_pattern = pattern.replace("*", ".*").replace(":", "\\:")
+                regex_pattern = f"^{regex_pattern}$"
+                
+                if re.match(regex_pattern, entity_type, re.IGNORECASE):
+                    if mod_key not in mod_entity_contributions:
+                        mod_entity_contributions[mod_key] = {
+                            "count": 0,
+                            "types": [],
+                            "why": source_data.get("why", ""),
+                            "tweaks": source_data.get("tweaks", []),
+                        }
+                    mod_entity_contributions[mod_key]["count"] += count
+                    mod_entity_contributions[mod_key]["types"].append(
+                        {"type": entity_type, "count": count}
+                    )
+                    break  # Don't double-count
+    
+    # Calculate percentages and filter significant contributors
+    significant_contributors = {}
+    for mod_key, contribution in mod_entity_contributions.items():
+        percentage = (contribution["count"] / total_entities) * 100
+        if percentage >= 10:  # Only show mods contributing ≥10% of entities
+            significant_contributors[mod_key] = {
+                **contribution,
+                "percentage": percentage,
+            }
+    
+    return {
+        "total_entities": total_entities,
+        "contributors": significant_contributors,
+        "thresholds": entity_thresholds,
+    }
+
+
+def _build_entity_suspects(
+    entity_analysis: dict[str, Any],
+    detected_mods: dict[str, Any],
+    matched_patterns: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build suspects list from entity analysis.
+    
+    Args:
+        entity_analysis: Entity breakdown analysis results
+        detected_mods: Dictionary of detected mods
+        matched_patterns: List of matched patterns
+        
+    Returns:
+        List of suspects based on entity contributions
+    """
+    suspects = []
+    contributors = entity_analysis.get("contributors", {})
+    total_entities = entity_analysis.get("total_entities", 0)
+    
+    # Check if entity patterns triggered
+    has_entity_pattern = any(
+        "entity" in p.get("id", "").lower() for p in matched_patterns
+    )
+    
+    if not has_entity_pattern:
+        return suspects  # Don't add entity suspects without entity pressure
+    
+    for mod_key, contribution in contributors.items():
+        # Check if mod is detected
+        if mod_key not in detected_mods:
+            continue
+        
+        mod_data = detected_mods[mod_key]
+        percentage = contribution.get("percentage", 0)
+        
+        # Calculate confidence based on percentage contribution
+        # Higher percentage = higher confidence
+        base_confidence = min(80, int(percentage * 1.5))  # Cap at 80%
+        
+        # Boost if entity patterns are severe
+        pattern_boost = 0
+        for pattern in matched_patterns:
+            if "severe_entity" in pattern.get("id", ""):
+                pattern_boost = 10
+                break
+            elif "entity" in pattern.get("id", ""):
+                pattern_boost = 5
+        
+        confidence = min(100, base_confidence + pattern_boost)
+        
+        # Build reasons
+        entity_count = contribution['count']
+        reasons = [
+            f"Contributing {percentage:.1f}% of total entities "
+            f"({entity_count}/{total_entities})"
+        ]
+        
+        if contribution.get("why"):
+            reasons.append(contribution["why"])
+        
+        suspects.append({
+            "name": mod_data.get("display_name", mod_key),
+            "type": "mod",
+            "confidence": confidence,
+            "reasons": reasons,
+            "tags": mod_data.get("tags", []),
+            "mod_key": mod_key,
+            "entity_contribution": contribution,
+        })
+    
+    return suspects
+
+
 def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
     """Run the pattern matcher on normalized Spark data.
     
@@ -477,6 +651,7 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         - recommendations: actionable steps
         - missing_data: fields that would help diagnosis
         - known_issues: known issues from detected mods
+        - entity_analysis: entity breakdown analysis (if available)
     """
     rules = _load_rules()
     
@@ -485,6 +660,9 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
     
     # Match patterns
     matched_patterns = _match_patterns(parsed_data, rules)
+    
+    # Analyze entity breakdown
+    entity_analysis = _analyze_entity_breakdown(parsed_data, detected_mods, rules)
     
     # Build signals list
     signals = [
@@ -495,8 +673,23 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
     # Build suspects list
     suspects = _build_suspects(detected_mods, matched_patterns)
     
+    # Add entity-based suspects if we have significant entity contributors
+    if entity_analysis and entity_analysis.get("contributors"):
+        entity_suspects = _build_entity_suspects(
+            entity_analysis, detected_mods, matched_patterns
+        )
+        # Merge with existing suspects, avoiding duplicates
+        existing_mod_keys = {s.get("mod_key") for s in suspects}
+        for entity_suspect in entity_suspects:
+            if entity_suspect.get("mod_key") not in existing_mod_keys:
+                suspects.append(entity_suspect)
+        # Re-sort by confidence
+        suspects.sort(key=lambda x: x["confidence"], reverse=True)
+    
     # Build recommendations
-    recommendations = _build_recommendations(detected_mods, matched_patterns, suspects, rules)
+    recommendations = _build_recommendations(
+        detected_mods, matched_patterns, suspects, rules, entity_analysis
+    )
     
     # Extract known issues from suspects
     known_issues = []
@@ -523,8 +716,9 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         "signals": signals,
         "suspects": suspects,
         "recommendations": recommendations,
-        "known_issues": known_issues,
         "missing_data": missing_data,
+        "known_issues": known_issues,
+        "entity_analysis": entity_analysis,
     }
 
 
