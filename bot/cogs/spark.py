@@ -233,7 +233,7 @@ class SparkCog(commands.Cog):
                 f"Command: `{spark_command}`"
             )
             
-            # Get WebSocket info and send the command
+            # Get WebSocket info (we'll reuse this)
             async with aiohttp.ClientSession() as sess:
                 cli = PteroClient(sess, panel, token)
                 ws_info = await cli.websocket_info(uuid)
@@ -246,14 +246,8 @@ class SparkCog(commands.Cog):
             # Wait for the profiling to complete (add a buffer of 5 seconds)
             await asyncio.sleep(timeout + 5)
             
-            # Fetch logs to find the Spark URL
-            async with aiohttp.ClientSession() as sess:
-                cli = PteroClient(sess, panel, token)
-                ws_info = await cli.websocket_info(uuid)
-                socket_url = ws_info["data"]["socket"]
-                ws_token = ws_info["data"]["token"]
-            
             # Fetch recent logs (increase lines to ensure we catch the URL)
+            # Reuse the WebSocket info from earlier
             logs = await fetch_recent_logs(
                 socket_url, panel, ws_token, 
                 max_lines=100, 
