@@ -7,12 +7,11 @@ Based on the parsing approach from test.py.
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import aiohttp
 
 from .pattern_matcher import diagnose, format_diagnosis_for_discord
-
 
 # Severity thresholds for performance metrics
 SEVERITY_THRESHOLDS = {

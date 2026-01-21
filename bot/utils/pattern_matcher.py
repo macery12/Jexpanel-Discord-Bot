@@ -122,7 +122,9 @@ def _detect_mods(parsed_data: dict[str, Any], rules: dict[str, Any]) -> dict[str
     return detected
 
 
-def _evaluate_condition(condition: dict[str, Any], parsed_data: dict[str, Any], thresholds: dict[str, Any]) -> bool:
+def _evaluate_condition(
+    condition: dict[str, Any], parsed_data: dict[str, Any], thresholds: dict[str, Any]
+) -> bool:
     """Evaluate a single condition against the parsed data.
     
     Args:
@@ -180,7 +182,9 @@ def _evaluate_condition(condition: dict[str, Any], parsed_data: dict[str, Any], 
     return False
 
 
-def _evaluate_pattern(pattern: dict[str, Any], parsed_data: dict[str, Any], thresholds: dict[str, Any]) -> bool:
+def _evaluate_pattern(
+    pattern: dict[str, Any], parsed_data: dict[str, Any], thresholds: dict[str, Any]
+) -> bool:
     """Evaluate a pattern's conditions.
     
     Args:
@@ -232,14 +236,16 @@ def _match_patterns(parsed_data: dict[str, Any], rules: dict[str, Any]) -> list[
     patterns = rules.get("patterns", [])
     thresholds = rules.get("thresholds", {})
     
-    for pattern in patterns:
-        if _evaluate_pattern(pattern, parsed_data, thresholds):
-            matched.append(pattern)
+    matched = [
+        pattern for pattern in patterns if _evaluate_pattern(pattern, parsed_data, thresholds)
+    ]
     
     return matched
 
 
-def _build_suspects(detected_mods: dict[str, Any], matched_patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_suspects(
+    detected_mods: dict[str, Any], matched_patterns: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Build a list of suspects with confidence scores.
     
     Args:
@@ -348,7 +354,9 @@ def _build_recommendations(
     return recommendations[:10]  # Limit total recommendations
 
 
-def _identify_missing_data(parsed_data: dict[str, Any], matched_patterns: list[dict[str, Any]]) -> list[str]:
+def _identify_missing_data(
+    parsed_data: dict[str, Any], matched_patterns: list[dict[str, Any]]
+) -> list[str]:
     """Identify what data is missing that would increase confidence.
     
     Args:
@@ -502,16 +510,14 @@ def format_diagnosis_for_discord(diagnosis: dict[str, Any], parsed_data: dict[st
     recommendations = diagnosis.get("recommendations", [])
     if recommendations:
         lines.append("**💡 Recommended Actions:**")
-        for rec in recommendations[:8]:  # Limit to 8
-            lines.append(f"  • {rec}")
+        lines.extend(f"  • {rec}" for rec in recommendations[:8])  # Limit to 8
         lines.append("")
     
     # Missing data
     missing = diagnosis.get("missing_data", [])
     if missing:
         lines.append("**📊 Capture Next Time:**")
-        for item in missing[:5]:  # Max 5
-            lines.append(f"  • {item}")
+        lines.extend(f"  • {item}" for item in missing[:5])  # Max 5
         lines.append("")
     
     message = "\n".join(lines)
