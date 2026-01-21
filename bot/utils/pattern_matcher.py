@@ -467,6 +467,7 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         - suspects: ranked list with confidence scores
         - recommendations: actionable steps
         - missing_data: fields that would help diagnosis
+        - known_issues: known issues from detected mods
     """
     rules = _load_rules()
     
@@ -488,6 +489,20 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
     # Build recommendations
     recommendations = _build_recommendations(detected_mods, matched_patterns, suspects, rules)
     
+    # Extract known issues from suspects
+    known_issues = []
+    for suspect in suspects[:5]:  # Top 5 suspects
+        mod_key = suspect.get("mod_key")
+        if mod_key and mod_key in detected_mods:
+            mod_data = detected_mods[mod_key]
+            mod_name = mod_data.get("display_name", mod_key)
+            issues = mod_data.get("known_issues", [])
+            if issues:
+                known_issues.append({
+                    "mod": mod_name,
+                    "issues": issues[:3]  # Limit to 3 issues per mod
+                })
+    
     # Identify missing data
     missing_data = _identify_missing_data(parsed_data, matched_patterns)
     
@@ -499,6 +514,7 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         "signals": signals,
         "suspects": suspects,
         "recommendations": recommendations,
+        "known_issues": known_issues,
         "missing_data": missing_data,
     }
 
@@ -515,29 +531,65 @@ def format_diagnosis_for_discord(diagnosis: dict[str, Any], parsed_data: dict[st
     """
     lines = []
     
+    # Header with platform info
+    platform = _safe_get(parsed_data, "platform", {})
+    run = _safe_get(parsed_data, "run", {})
+    
+    lines.append("📊 **Spark Profile Analysis**")
+    platform_name = platform.get('name', 'Unknown')
+    platform_ver = platform.get('version', 'Unknown')
+    lines.append(f"**Platform:** {platform_name} {platform_ver}")
+    lines.append(f"**MC Version:** {platform.get('mc_version', 'Unknown')}")
+    lines.append(f"**Duration:** {run.get('duration_seconds', 0):.1f}s")
+    lines.append("")
+    
     # Status headline
     status = diagnosis["overall_status"]
     status_emoji = {"ok": "✅", "warn": "⚠️", "bad": "🔴"}
     lines.append(f"{status_emoji.get(status, '⚪')} **Server Status: {status.upper()}**")
     lines.append("")
     
-    # TPS/MSPT headline if available
+    # Performance Metrics
+    lines.append("**Performance:**")
+    
+    # TPS
     tps_1m = _safe_get(parsed_data, "tps.last_1m")
     if tps_1m is not None:
         tps_emoji = "🔴" if tps_1m < 15 else "🟠" if tps_1m < 18 else "🟢"
-        lines.append(f"{tps_emoji} **TPS**: {tps_1m:.1f}/20.0")
+        lines.append(f"{tps_emoji} TPS (1m): {tps_1m:.1f}/20.0")
     
+    # MSPT
     mspt_data = _safe_get(parsed_data, "mspt.last_1m")
     if mspt_data and isinstance(mspt_data, dict):
         mspt_mean = mspt_data.get("mean")
         if mspt_mean is not None:
             mspt_emoji = "🔴" if mspt_mean > 70 else "🟠" if mspt_mean > 50 else "🟢"
-            lines.append(f"{mspt_emoji} **MSPT**: {mspt_mean:.1f}ms")
+            lines.append(f"{mspt_emoji} MSPT (1m avg): {mspt_mean:.1f}ms")
     
-    # GC headline if available
-    gc_data = _safe_get(parsed_data, "gc")
-    if gc_data:
-        lines.append(f"🗑️ **GC**: {len(gc_data)} collectors active")
+    # Entities
+    entities_total = _safe_get(parsed_data, "entities.total")
+    if entities_total is not None:
+        ent_emoji = "🔴" if entities_total > 1500 else "🟠" if entities_total > 1000 else "🟢"
+        lines.append(f"{ent_emoji} Entities: {entities_total}")
+    
+    # Memory
+    heap_used = _safe_get(parsed_data, "memory.heap_used_mb", 0)
+    heap_committed = _safe_get(parsed_data, "memory.heap_committed_mb", 0)
+    if heap_committed > 0:
+        usage_pct = (heap_used / heap_committed) * 100
+        mem_emoji = "🔴" if usage_pct > 90 else "🟠" if usage_pct > 80 else "🟢"
+        mem_text = f"{heap_used:.0f}MB/{heap_committed:.0f}MB ({usage_pct:.0f}%)"
+        lines.append(f"{mem_emoji} Memory: {mem_text}")
+    
+    # Players
+    players = _safe_get(parsed_data, "players")
+    if players is not None:
+        lines.append(f"👥 Players: {players}")
+    
+    # Mods
+    mods = _safe_get(parsed_data, "mods", {})
+    if mods:
+        lines.append(f"⚙️ Mods: {len(mods)}")
     
     lines.append("")
     
@@ -551,11 +603,16 @@ def format_diagnosis_for_discord(diagnosis: dict[str, Any], parsed_data: dict[st
             lines.append(f"  • {name} ({conf}% confidence)")
         lines.append("")
     
-    # Recommendations grouped
-    recommendations = diagnosis.get("recommendations", [])
-    if recommendations:
-        lines.append("**💡 Recommended Actions:**")
-        lines.extend(f"  • {rec}" for rec in recommendations[:8])  # Limit to 8
+    # Known issues instead of recommendations
+    known_issues = diagnosis.get("known_issues", [])
+    if known_issues:
+        lines.append("**⚠️ Known Issues:**")
+        for issue_group in known_issues[:3]:  # Limit to top 3 mods
+            mod_name = issue_group.get("mod", "Unknown")
+            issues = issue_group.get("issues", [])
+            if issues:
+                lines.append(f"**{mod_name}:**")
+                lines.extend(f"  • {issue}" for issue in issues)
         lines.append("")
     
     # Missing data
