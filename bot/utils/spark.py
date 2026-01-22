@@ -245,10 +245,11 @@ def _parse_spark_json(raw: dict[str, Any]) -> dict[str, Any]:
             elif any(keyword in name_lower for keyword in ["old", "marksweep", "cms", "g1", "tenured"]):
                 gc_old = collections
     
-    _debug_log("TPS", tps_recent)
-    _debug_log("MSPT", tick_mspt)
-    _debug_log("Entities", world_entities_total)
-    _debug_log("Chunks", world_loaded_chunks)
+    if _debug_enabled:
+        _debug_log("TPS", tps_recent)
+        _debug_log("MSPT", tick_mspt)
+        _debug_log("Entities", world_entities_total)
+        _debug_log("Chunks", world_loaded_chunks)
     
     # Build normalized structure
     normalized = {
