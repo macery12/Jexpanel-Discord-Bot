@@ -63,11 +63,6 @@ SEVERITY_THRESHOLDS = {
 # STAGE A: URL Handling and Fetching
 # =============================================================================
 
-
-# =============================================================================
-# STAGE A: URL Handling and Fetching
-# =============================================================================
-
 def _ensure_raw_url(url: str) -> str:
     """Ensure the Spark URL has ?raw=1 parameter.
     
