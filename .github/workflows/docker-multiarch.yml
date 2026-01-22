@@ -2,7 +2,7 @@ name: docker-multiarch
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "V2" ]
     tags: [ "v*", "V*" ]
   workflow_dispatch:
 
