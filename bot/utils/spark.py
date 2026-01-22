@@ -1,11 +1,19 @@
 """Spark profiler report analyzer for Minecraft servers.
 
 Analyzes Spark profiler reports to detect performance issues.
-Based on the parsing approach from test.py.
+
+Architecture:
+- Stage A: URL handling and JSON fetching
+- Stage B: Normalization of raw Spark JSON into consistent schema
+- Stage C-H: Pattern matching, suspect detection, recommendations (via pattern_matcher)
+
+The parser is resilient to missing keys and version differences in Spark JSON.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -13,7 +21,20 @@ import aiohttp
 
 from .pattern_matcher import diagnose, format_diagnosis_for_discord
 
-# Severity thresholds for performance metrics
+# Debug logging (enabled via SPARK_DEBUG=1 environment variable)
+_logger = logging.getLogger(__name__)
+_debug_enabled = os.environ.get("SPARK_DEBUG", "").strip() == "1"
+
+def _debug_log(message: str, data: Any = None) -> None:
+    """Log debug message if SPARK_DEBUG=1."""
+    if _debug_enabled:
+        if data is not None:
+            _logger.info(f"[SPARK DEBUG] {message}: {data}")
+        else:
+            _logger.info(f"[SPARK DEBUG] {message}")
+
+# Legacy severity thresholds (kept for backward compatibility with _analyze_performance)
+# The new pattern matcher uses thresholds from rules.yml
 SEVERITY_THRESHOLDS = {
     "tps": {
         "CRITICAL": 15.0,  # Below 15 TPS
@@ -38,8 +59,24 @@ SEVERITY_THRESHOLDS = {
 }
 
 
+# =============================================================================
+# STAGE A: URL Handling and Fetching
+# =============================================================================
+
+
+# =============================================================================
+# STAGE A: URL Handling and Fetching
+# =============================================================================
+
 def _ensure_raw_url(url: str) -> str:
-    """Ensure the Spark URL has ?raw=1 parameter."""
+    """Ensure the Spark URL has ?raw=1 parameter.
+    
+    Args:
+        url: Original Spark URL
+        
+    Returns:
+        URL with ?raw=1 parameter added
+    """
     parts = urlparse(url)
     qs = parse_qs(parts.query, keep_blank_values=True)
     qs["raw"] = ["1"]
@@ -48,7 +85,14 @@ def _ensure_raw_url(url: str) -> str:
 
 
 def _validate_spark_url(url: str) -> bool:
-    """Validate that this is a Spark profiler URL."""
+    """Validate that this is a Spark profiler URL.
+    
+    Args:
+        url: URL to validate
+        
+    Returns:
+        True if URL appears to be a valid Spark profiler URL
+    """
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         return False
@@ -65,61 +109,117 @@ def _validate_spark_url(url: str) -> bool:
     return True
 
 
+# =============================================================================
+# STAGE B: Normalization - Parse raw Spark JSON into consistent schema
+# =============================================================================
+
+def _safe_div(numerator: float | int, denominator: float | int, default: float = 0.0) -> float:
+    """Safely divide two numbers, returning default if denominator is 0.
+    
+    Args:
+        numerator: Top number
+        denominator: Bottom number
+        default: Value to return if denominator is 0
+        
+    Returns:
+        numerator / denominator, or default if division impossible
+    """
+    try:
+        if denominator == 0:
+            return default
+        return float(numerator) / float(denominator)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return default
+
+
 def _parse_spark_json(raw: dict[str, Any]) -> dict[str, Any]:
     """Parse raw Spark JSON into a normalized structure.
     
-    Based on the approach from test.py.
+    This function extracts metrics from Spark's JSON format and normalizes them
+    into a consistent schema that the pattern matcher can use. It handles missing
+    keys gracefully and adapts to different Spark versions.
+    
+    The normalized structure includes:
+    - platform: Server platform information (name, version, MC version)
+    - run: Profile run metadata (duration, ticks, avg TPS)
+    - tps: TPS metrics (last_1m, last_5m, last_15m, recent, average)
+    - mspt: MSPT/tick time metrics (last_1m, last_5m)
+    - tick: Derived tick metrics for pattern matching (mspt, spike_mspt)
+    - players: Player count
+    - player: Player metrics for pattern matching (online)
+    - entities: Entity data (total, top breakdown)
+    - world: World metrics (loaded_chunks, entities_total, tile_entities_total)
+    - gc: Garbage collection data (young, old, raw collector data)
+    - memory: Memory metrics (heap_used_mb, heap_committed_mb)
+    - mods: Dictionary of installed mods (modid -> version)
+    
+    Args:
+        raw: Raw Spark JSON dictionary from API
+        
+    Returns:
+        Normalized dictionary with consistent schema
     """
-    meta = raw.get("metadata", {})
-    platform = meta.get("platformStatistics", {})
-    sources = meta.get("sources", {})
+    _debug_log("Parsing Spark JSON")
+    
+    # Extract top-level sections with safe defaults
+    meta = raw.get("metadata") or {}
+    platform = meta.get("platformStatistics") or {}
+    sources = meta.get("sources") or {}
     
     # Platform info
-    platform_info = meta.get("platform", {})
+    platform_info = meta.get("platform") or {}
     
-    # Run info
-    start = meta.get("startTime", 0)
-    end = meta.get("endTime", 0)
-    duration = (end - start) / 1000 if start and end else 0.0
-    ticks = meta.get("numberOfTicks", 0)
-    avg_tps = round(ticks / duration, 2) if duration > 0 else 0.0
+    # Run info - calculate duration and average TPS
+    start = meta.get("startTime") or 0
+    end = meta.get("endTime") or 0
+    duration = _safe_div(end - start, 1000) if start and end else 0.0
+    ticks = meta.get("numberOfTicks") or 0
+    avg_tps = round(_safe_div(ticks, duration), 2) if duration > 0 else 0.0
     
-    # TPS / MSPT
-    tps = platform.get("tps", {})
-    mspt = platform.get("mspt", {})
+    # TPS / MSPT sections
+    tps = platform.get("tps") or {}
+    mspt = platform.get("mspt") or {}
     
-    # Entities
-    world = platform.get("world", {})
-    entity_counts = world.get("entityCounts", {}) or {}
-    top_entities = dict(sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)[:10])
+    # World data (entities, chunks, tile entities)
+    world = platform.get("world") or {}
+    entity_counts = world.get("entityCounts") or {}
     
-    # GC
-    gc = platform.get("gc", {}) or {}
+    # Sort entities by count and take top 10
+    if entity_counts:
+        top_entities = dict(sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)[:10])
+    else:
+        top_entities = {}
     
-    # Memory
-    heap = (platform.get("memory", {}) or {}).get("heap", {}) or {}
+    # GC data
+    gc = platform.get("gc") or {}
     
-    # Mods (non built-in sources)
-    mods = {
-        mod_id: info.get("version")
-        for mod_id, info in (sources or {}).items()
-        if isinstance(info, dict) and not info.get("builtIn", False)
-    }
+    # Memory - heap section
+    memory_data = platform.get("memory") or {}
+    heap = memory_data.get("heap") or {}
     
-    # Normalize data to match pattern_matcher expectations
-    # Extract additional metrics for pattern matching
+    # Mods - filter out built-in sources
+    # Sources format: {modid: {name: str, version: str, builtIn: bool}, ...}
+    mods = {}
+    for mod_id, info in (sources or {}).items():
+        if isinstance(info, dict) and not info.get("builtIn", False):
+            mods[mod_id] = info.get("version")
     
-    # Get tick data (if available)
+    _debug_log(f"Detected {len(mods)} mods")
+    
+    # Extract tick metrics for pattern matching
     tick_mspt = None
     tick_spike_mspt = None
-    if mspt.get("last1m") and isinstance(mspt.get("last1m"), dict):
-        tick_mspt = mspt["last1m"].get("mean")
-        tick_spike_mspt = mspt["last1m"].get("max")
+    mspt_1m = mspt.get("last1m")
+    if mspt_1m and isinstance(mspt_1m, dict):
+        tick_mspt = mspt_1m.get("mean")
+        tick_spike_mspt = mspt_1m.get("max")
     
-    # Get recent TPS (preferring 1m, then average)
-    tps_recent = tps.get("last1m") or avg_tps
+    # Get recent TPS (preferring last1m, fallback to calculated average)
+    tps_recent = tps.get("last1m")
+    if tps_recent is None:
+        tps_recent = avg_tps
     
-    # Calculate average TPS safely
+    # Calculate average TPS from 5m and 15m windows
     tps_5m = tps.get("last5m")
     tps_15m = tps.get("last15m")
     if tps_5m is not None and tps_15m is not None:
@@ -127,26 +227,36 @@ def _parse_spark_json(raw: dict[str, Any]) -> dict[str, Any]:
     else:
         tps_average = tps_recent
     
-    # Extract world metrics
+    # Extract world metrics (used by patterns)
     world_loaded_chunks = world.get("totalChunks")
     world_entities_total = world.get("totalEntities")
     world_tile_entities_total = world.get("totalBlockEntities")
     
-    # Parse GC data into young/old if available
+    # Parse GC data - try to identify young vs old gen collectors
     gc_young = None
     gc_old = None
     if gc:
         for collector_name, collector_data in gc.items():
-            if isinstance(collector_data, dict):
-                # Try to identify young vs old gen
-                name_lower = collector_name.lower()
-                collections = collector_data.get("total", 0)
-                if "young" in name_lower or "scavenge" in name_lower or "copy" in name_lower:
-                    gc_young = collections
-                elif "old" in name_lower or "marksweep" in name_lower or "cms" in name_lower or "g1" in name_lower:
-                    gc_old = collections
+            if not isinstance(collector_data, dict):
+                continue
+            
+            name_lower = collector_name.lower()
+            collections = collector_data.get("total", 0)
+            
+            # Young gen indicators
+            if any(keyword in name_lower for keyword in ["young", "scavenge", "copy", "parnew"]):
+                gc_young = collections
+            # Old gen indicators
+            elif any(keyword in name_lower for keyword in ["old", "marksweep", "cms", "g1", "tenured"]):
+                gc_old = collections
     
-    return {
+    _debug_log("TPS", tps_recent)
+    _debug_log("MSPT", tick_mspt)
+    _debug_log("Entities", world_entities_total)
+    _debug_log("Chunks", world_loaded_chunks)
+    
+    # Build normalized structure
+    normalized = {
         "platform": {
             "name": platform_info.get("name", "Unknown"),
             "version": platform_info.get("version", "Unknown"),
@@ -189,15 +299,23 @@ def _parse_spark_json(raw: dict[str, Any]) -> dict[str, Any]:
         "gc": {
             "young": gc_young,  # For pattern matching
             "old": gc_old,  # For pattern matching
-            **gc,  # Keep original GC data (may overwrite young/old with raw data if present)
+            **gc,  # Keep original GC data
         },
         "memory": {
-            "heap_used_mb": round((heap.get("used", 0) / 1024 / 1024), 1),
-            "heap_committed_mb": round((heap.get("committed", 0) / 1024 / 1024), 1),
+            "heap_used_mb": round(_safe_div(heap.get("used", 0), 1024 * 1024), 1),
+            "heap_committed_mb": round(_safe_div(heap.get("committed", 0), 1024 * 1024), 1),
         },
         "mods": mods,
     }
+    
+    return normalized
 
+
+# =============================================================================
+# Legacy Analysis (kept for backward compatibility)
+# These functions provide simple threshold-based alerts.
+# The new system uses pattern_matcher.diagnose() instead.
+# =============================================================================
 
 def _analyze_performance(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Analyze the parsed Spark data and detect issues."""
@@ -320,25 +438,38 @@ def _get_heap_severity(usage_pct: float) -> str | None:
     return None
 
 
+# =============================================================================
+# Main Entry Points
+# =============================================================================
+
 async def analyze_spark_report(url: str) -> dict[str, Any]:
     """Analyze a Spark profiler report from a URL.
+    
+    Main entry point for Spark analysis. Fetches the report, normalizes it,
+    and runs pattern-based diagnosis.
     
     Args:
         url: The Spark report URL (will auto-add ?raw=1 if needed)
         
     Returns:
-        Dictionary containing analysis results
+        Dictionary containing:
+        - summary: Normalized Spark data
+        - alerts: Legacy threshold-based alerts (for backward compatibility)
+        - diagnosis: Pattern-based diagnosis from pattern_matcher
         
     Raises:
         ValueError: If the URL is invalid or report type is unsupported
         aiohttp.ClientError: If there's a network error
     """
+    _debug_log(f"Analyzing Spark report: {url}")
+    
     # Validate URL
     if not _validate_spark_url(url):
         raise ValueError(f"Invalid Spark URL: {url}")
     
     # Ensure ?raw=1 parameter
     raw_url = _ensure_raw_url(url)
+    _debug_log(f"Fetching from: {raw_url}")
     
     # Fetch JSON
     async with aiohttp.ClientSession() as session:
@@ -353,14 +484,20 @@ async def analyze_spark_report(url: str) -> dict[str, Any]:
     if report_type != "sampler":
         raise ValueError(f"Invalid report type: expected 'sampler', got '{report_type}'")
     
-    # Parse the JSON
+    # Parse the JSON (Stage B: Normalization)
     parsed_data = _parse_spark_json(raw_json)
     
-    # Analyze for issues (legacy)
+    # Run legacy analysis (for backward compatibility)
     alerts = _analyze_performance(parsed_data)
     
-    # Run pattern matcher
+    # Run pattern matcher (Stages C-H: Pattern matching, suspect detection, etc.)
+    _debug_log("Running pattern matcher")
     diagnosis = diagnose(parsed_data)
+    _debug_log("Diagnosis complete", {
+        "status": diagnosis.get("overall_status"),
+        "signals": len(diagnosis.get("signals", [])),
+        "suspects": len(diagnosis.get("suspects", [])),
+    })
     
     # Return structured result
     return {

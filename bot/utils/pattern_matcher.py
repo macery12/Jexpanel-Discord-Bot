@@ -1,15 +1,33 @@
 """Pattern-matching diagnosis system for Spark profiler data.
 
-This module provides a rule-driven system for diagnosing Minecraft server performance issues
-based on normalized Spark profiler data. It uses YAML rules to:
+This module provides a rule-driven system for diagnosing Minecraft server performance
+issues based on normalized Spark profiler data.
+
+Architecture (Stages C-H from spark.py):
+- Stage C: Pattern evaluation - match performance patterns against thresholds
+- Stage D: Mod detection - identify which mods from rules are installed
+- Stage E: Suspect scoring - gate suspects by patterns, calculate confidence
+- Stage F: Entity breakdown - analyze entity sources and attribute to mods
+- Stage G: Recommendation builder - build actionable recommendations
+- Stage H: Discord formatter - format output for Discord
+
+Key improvements:
+1. Proper gating: Suspects only shown when patterns match AND tags overlap
+2. Fixed entity detection: Only attributes entity suspects when entity patterns trigger
+3. Better scoring: Combines multiple signals (severity, tag overlap, pattern weight)
+4. Threshold enforcement: Minimum pattern weight (6) and confidence (55%) required
+
+The system uses YAML rules to:
+- Define performance thresholds
 - Detect installed mods
-- Evaluate server performance patterns
+- Evaluate server performance patterns  
 - Match symptoms to suspected causes
 - Generate actionable recommendations
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from functools import lru_cache
@@ -18,6 +36,27 @@ from typing import Any
 
 import yaml
 
+# Debug logging (enabled via SPARK_DEBUG=1 environment variable)
+_logger = logging.getLogger(__name__)
+_debug_enabled = os.environ.get("SPARK_DEBUG", "").strip() == "1"
+
+def _debug_log(message: str, data: Any = None) -> None:
+    """Log debug message if SPARK_DEBUG=1."""
+    if _debug_enabled:
+        if data is not None:
+            _logger.info(f"[PATTERN_MATCHER DEBUG] {message}: {data}")
+        else:
+            _logger.info(f"[PATTERN_MATCHER DEBUG] {message}")
+
+
+# Minimum thresholds for suspect reporting
+MIN_PATTERN_WEIGHT = 6  # Require meaningful patterns (not just minor issues)
+MIN_SUSPECT_CONFIDENCE = 55  # Require at least 55% confidence to report suspect
+
+
+# =============================================================================
+# Rules Loading
+# =============================================================================
 
 # Cache the rules file to avoid repeated I/O or network calls
 @lru_cache(maxsize=1)
@@ -67,6 +106,10 @@ def _load_rules() -> dict[str, Any]:
     with open(rules_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
 def _safe_get(data: dict[str, Any], path: str, default: Any = None) -> Any:
     """Safely get a nested dict value using dot notation.
@@ -126,20 +169,28 @@ def _matches_mod(mod_name: str, pattern: str) -> bool:
     return pattern_lower in mod_name_lower
 
 
+# =============================================================================
+# STAGE D: Mod Detection
+# =============================================================================
+
 def _detect_mods(parsed_data: dict[str, Any], rules: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Detect which mods from the rules are present in the parsed data.
+    
+    IMPORTANT: Detection does NOT mean suspicion. A mod being installed doesn't
+    make it a suspect. Suspects are determined later by pattern matching.
     
     Args:
         parsed_data: Normalized Spark data
         rules: Loaded rules dictionary
         
     Returns:
-        Dictionary of detected mods with their rules
+        Dictionary of detected mods {rule_key: {mod_data + detected_name + version}}
     """
     detected = {}
     mods_in_data = parsed_data.get("mods", {})
     
     if not mods_in_data:
+        _debug_log("No mods found in data")
         return detected
     
     mod_rules = rules.get("mods", {})
@@ -175,8 +226,18 @@ def _detect_mods(parsed_data: dict[str, Any], rules: dict[str, Any]) -> dict[str
             if matched:
                 break  # Move to next mod
     
+    _debug_log(f"Detected {len(detected)} mods with rules", list(detected.keys())[:5])
     return detected
 
+
+# =============================================================================
+# STAGE C: Pattern Evaluation
+# =============================================================================
+
+
+# =============================================================================
+# STAGE C: Pattern Evaluation
+# =============================================================================
 
 def _evaluate_condition(
     condition: dict[str, Any], parsed_data: dict[str, Any], thresholds: dict[str, Any]
@@ -281,28 +342,44 @@ def _evaluate_pattern(
 def _match_patterns(parsed_data: dict[str, Any], rules: dict[str, Any]) -> list[dict[str, Any]]:
     """Find all patterns that match the current data.
     
+    Patterns are performance signatures (e.g., "low_tps", "high_mspt", "entity_pressure")
+    that trigger when specific metrics exceed thresholds.
+    
     Args:
         parsed_data: Normalized Spark data
         rules: Loaded rules dictionary
         
     Returns:
-        List of matched patterns with their data
+        List of matched patterns with their data (id, weight, tags, explanation)
     """
     matched = []
     patterns = rules.get("patterns", [])
     thresholds = rules.get("thresholds", {})
     
-    matched = [
-        pattern for pattern in patterns if _evaluate_pattern(pattern, parsed_data, thresholds)
-    ]
+    for pattern in patterns:
+        if _evaluate_pattern(pattern, parsed_data, thresholds):
+            matched.append(pattern)
     
+    _debug_log(f"Matched {len(matched)} patterns", [p.get("id") for p in matched])
     return matched
 
+
+# =============================================================================
+# STAGE E: Suspect Scoring (with proper gating)
+# =============================================================================
 
 def _build_suspects(
     detected_mods: dict[str, Any], matched_patterns: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Build a list of suspects with confidence scores.
+    
+    KEY FIX: Proper gating ensures suspects are only shown when:
+    1. At least one pattern is matched (performance issue exists)
+    2. Total pattern weight >= MIN_PATTERN_WEIGHT (meaningful issues, not minor)
+    3. Mod tags overlap with matched pattern tags (mod is relevant to symptoms)
+    4. Calculated confidence >= MIN_SUSPECT_CONFIDENCE (sufficient evidence)
+    
+    This prevents the bug where mods show as suspects just by being installed.
     
     Args:
         detected_mods: Dictionary of detected mods
@@ -321,40 +398,46 @@ def _build_suspects(
         pattern_tags.update(tags)
         total_pattern_weight += pattern.get("weight", 0)
     
-    # Don't show suspects if there's insufficient evidence of problems
-    # Require at least weight 6 (one meaningful pattern like "high_mspt" or "low_tps")
-    if total_pattern_weight < 6:
+    # GATE 1: Don't show suspects if there's insufficient evidence of problems
+    # Require at least MIN_PATTERN_WEIGHT (default 6) - one meaningful pattern
+    if total_pattern_weight < MIN_PATTERN_WEIGHT:
+        _debug_log(f"Pattern weight too low ({total_pattern_weight} < {MIN_PATTERN_WEIGHT}), no suspects")
         return []
+    
+    _debug_log(f"Pattern weight: {total_pattern_weight}, tags: {pattern_tags}")
     
     # Score each detected mod
     for mod_key, mod_data in detected_mods.items():
         mod_tags = set(mod_data.get("tags", []))
         matching_tags = mod_tags & pattern_tags
         
+        # GATE 2: Mod is present but doesn't match any symptoms
         if not matching_tags:
-            # Mod is present but doesn't match any symptoms
+            _debug_log(f"Mod {mod_key} has no matching tags, skipping")
             continue
         
-        # Calculate confidence
+        # Calculate confidence score
         # Base: severity (1-5) * 10 = 10-50
         base_confidence = mod_data.get("severity", 3) * 10
         
-        # Bonus for tag overlap
+        # Bonus for tag overlap (each matching tag adds credibility)
         tag_overlap_bonus = len(matching_tags) * 5
         
-        # Bonus proportional to pattern weight (more significant now)
+        # Bonus proportional to pattern weight (stronger patterns = more confidence)
         pattern_bonus = min(30, total_pattern_weight)
         
         confidence = min(100, base_confidence + tag_overlap_bonus + pattern_bonus)
         
-        # Require minimum confidence threshold (55%) to report as suspect
-        if confidence < 55:
+        # GATE 3: Require minimum confidence threshold to report as suspect
+        if confidence < MIN_SUSPECT_CONFIDENCE:
+            _debug_log(f"Mod {mod_key} confidence too low ({confidence} < {MIN_SUSPECT_CONFIDENCE}), skipping")
             continue
         
         # Build reasons list
         reasons = []
         if matching_tags:
-            reasons.append(f"Tags match symptoms: {', '.join(sorted(matching_tags)[:3])}")
+            tag_list = ', '.join(sorted(matching_tags)[:3])
+            reasons.append(f"Tags match symptoms: {tag_list}")
         
         suspects.append({
             "name": mod_data.get("display_name", mod_key),
@@ -368,8 +451,18 @@ def _build_suspects(
     # Sort by confidence
     suspects.sort(key=lambda x: x["confidence"], reverse=True)
     
+    _debug_log(f"Built {len(suspects)} suspects")
     return suspects
 
+
+# =============================================================================
+# STAGE F: Entity Breakdown Analysis
+# =============================================================================
+
+
+# =============================================================================
+# STAGE G: Recommendation Builder
+# =============================================================================
 
 def _build_recommendations(
     detected_mods: dict[str, Any],
@@ -494,10 +587,17 @@ def _determine_overall_status(matched_patterns: list[dict[str, Any]]) -> str:
         return "ok"
 
 
+# =============================================================================
+# STAGE F: Entity Breakdown Analysis
+# =============================================================================
+
 def _analyze_entity_breakdown(
     parsed_data: dict[str, Any], detected_mods: dict[str, Any], rules: dict[str, Any]
 ) -> dict[str, Any]:
     """Analyze entity breakdown to identify mods contributing to entity counts.
+    
+    This function maps entity types (e.g., "alexsmobs:elephant") to the mods that
+    add them, allowing us to attribute entity load to specific mods.
     
     Args:
         parsed_data: Normalized Spark data
@@ -505,13 +605,17 @@ def _analyze_entity_breakdown(
         rules: Loaded rules dictionary
         
     Returns:
-        Dictionary with entity analysis results
+        Dictionary with entity analysis results:
+        - total_entities: Total entity count
+        - contributors: Mods contributing >=10% of entities with counts and types
+        - thresholds: Entity thresholds from rules
     """
     entity_data = parsed_data.get("entities", {})
     top_entities = entity_data.get("top", {})
     total_entities = entity_data.get("total", 0)
     
     if not top_entities or not total_entities:
+        _debug_log("No entity data available for breakdown")
         return {}
     
     # Get entity rules from rules.yml
@@ -530,7 +634,8 @@ def _analyze_entity_breakdown(
             for pattern in match_entities:
                 # Convert wildcard pattern to regex
                 # e.g., "alexsmobs:*" -> "^alexsmobs:.*$"
-                regex_pattern = pattern.replace("*", ".*").replace(":", "\\:")
+                # Escape special regex characters except *
+                regex_pattern = re.escape(pattern).replace(r"\*", ".*")
                 regex_pattern = f"^{regex_pattern}$"
                 
                 if re.match(regex_pattern, entity_type, re.IGNORECASE):
@@ -557,6 +662,8 @@ def _analyze_entity_breakdown(
                 "percentage": percentage,
             }
     
+    _debug_log(f"Entity contributors: {len(significant_contributors)}", list(significant_contributors.keys()))
+    
     return {
         "total_entities": total_entities,
         "contributors": significant_contributors,
@@ -571,25 +678,32 @@ def _build_entity_suspects(
 ) -> list[dict[str, Any]]:
     """Build suspects list from entity analysis.
     
+    KEY FIX: Only create entity suspects when entity patterns are triggered.
+    This prevents showing entity suspects when there's no actual entity pressure.
+    
     Args:
         entity_analysis: Entity breakdown analysis results
         detected_mods: Dictionary of detected mods
         matched_patterns: List of matched patterns
         
     Returns:
-        List of suspects based on entity contributions
+        List of suspects based on entity contributions (empty if no entity pressure)
     """
     suspects = []
     contributors = entity_analysis.get("contributors", {})
     total_entities = entity_analysis.get("total_entities", 0)
     
-    # Check if entity patterns triggered
+    # CRITICAL FIX: Check if entity patterns triggered
+    # Only show entity suspects when entity_pressure or severe_entity_pressure patterns match
     has_entity_pattern = any(
         "entity" in p.get("id", "").lower() for p in matched_patterns
     )
     
     if not has_entity_pattern:
+        _debug_log("No entity patterns matched, skipping entity suspects")
         return suspects  # Don't add entity suspects without entity pressure
+    
+    _debug_log(f"Entity patterns matched, processing {len(contributors)} contributors")
     
     for mod_key, contribution in contributors.items():
         # Check if mod is detected
@@ -637,8 +751,19 @@ def _build_entity_suspects(
     return suspects
 
 
+# =============================================================================
+# Main Diagnosis Orchestrator
+# =============================================================================
+
 def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
     """Run the pattern matcher on normalized Spark data.
+    
+    Orchestrates the full diagnosis pipeline (Stages C-G):
+    - Stage C: Evaluate patterns against data
+    - Stage D: Detect installed mods  
+    - Stage E: Score suspects (with proper gating)
+    - Stage F: Analyze entity breakdown
+    - Stage G: Build recommendations
     
     Args:
         parsed_data: Normalized dict from _parse_spark_json
@@ -647,21 +772,22 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         Diagnosis object with:
         - overall_status: "ok", "warn", or "bad"
         - signals: list of matched pattern IDs/explanations
-        - suspects: ranked list with confidence scores
+        - suspects: ranked list with confidence scores (properly gated)
         - recommendations: actionable steps
         - missing_data: fields that would help diagnosis
         - known_issues: known issues from detected mods
         - entity_analysis: entity breakdown analysis (if available)
     """
+    _debug_log("Starting diagnosis")
     rules = _load_rules()
     
-    # Detect mods present
+    # Stage D: Detect mods present
     detected_mods = _detect_mods(parsed_data, rules)
     
-    # Match patterns
+    # Stage C: Match patterns
     matched_patterns = _match_patterns(parsed_data, rules)
     
-    # Analyze entity breakdown
+    # Stage F: Analyze entity breakdown
     entity_analysis = _analyze_entity_breakdown(parsed_data, detected_mods, rules)
     
     # Build signals list
@@ -670,10 +796,11 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         for p in matched_patterns
     ]
     
-    # Build suspects list
+    # Stage E: Build suspects list (with proper gating)
     suspects = _build_suspects(detected_mods, matched_patterns)
     
     # Add entity-based suspects if we have significant entity contributors
+    # AND entity patterns triggered (fixes entity detection bug)
     if entity_analysis and entity_analysis.get("contributors"):
         entity_suspects = _build_entity_suspects(
             entity_analysis, detected_mods, matched_patterns
@@ -708,7 +835,7 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
         # Re-sort by confidence
         suspects.sort(key=lambda x: x["confidence"], reverse=True)
     
-    # Build recommendations
+    # Stage G: Build recommendations
     recommendations = _build_recommendations(
         detected_mods, matched_patterns, suspects, rules, entity_analysis
     )
@@ -733,6 +860,13 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
     # Determine overall status
     overall_status = _determine_overall_status(matched_patterns)
     
+    _debug_log("Diagnosis complete", {
+        "status": overall_status,
+        "signals": len(signals),
+        "suspects": len(suspects),
+        "recommendations": len(recommendations),
+    })
+    
     return {
         "overall_status": overall_status,
         "signals": signals,
@@ -744,8 +878,19 @@ def diagnose(parsed_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# =============================================================================
+# STAGE H: Discord Formatter
+# =============================================================================
+
 def format_diagnosis_for_discord(diagnosis: dict[str, Any], parsed_data: dict[str, Any]) -> str:
     """Format diagnosis output for Discord.
+    
+    Stage H: Formats the complete diagnosis into a Discord-friendly message with:
+    - Server status and platform info
+    - Performance metrics with color-coded emojis
+    - Top suspects (only when properly gated)
+    - Known issues for suspected mods
+    - Missing data indicators
     
     Args:
         diagnosis: Result from diagnose()
