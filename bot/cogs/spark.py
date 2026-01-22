@@ -19,6 +19,40 @@ from ..db.models import UserCredential
 from ..utils.spark import analyze_spark_report, format_discord_report
 
 
+class TweaksButton(discord.ui.View):
+    """Button view for showing tweaks in an ephemeral message."""
+    
+    def __init__(self, recommendations: list[str]):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.recommendations = recommendations
+    
+    @discord.ui.button(
+        label="View Recommended Tweaks",
+        style=discord.ButtonStyle.primary,
+        emoji="💡"
+    )
+    async def show_tweaks(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Show the recommended tweaks when button is clicked."""
+        if not self.recommendations:
+            await interaction.response.send_message(
+                "No specific tweaks recommended at this time.",
+                ephemeral=True
+            )
+            return
+        
+        # Format tweaks message
+        lines = ["**💡 Recommended Tweaks:**", ""]
+        lines.extend(f"• {rec}" for rec in self.recommendations[:15])  # Limit to 15
+        
+        message = "\n".join(lines)
+        
+        # Truncate if too long
+        if len(message) > 2000:
+            message = message[:1997] + "..."
+        
+        await interaction.response.send_message(message, ephemeral=True)
+
+
 async def get_user_token_for_panel(user_id: int, panel_url: str) -> str | None:
     """Get user's API token for a specific panel."""
     async with SessionLocal() as s:
@@ -164,8 +198,16 @@ class SparkCog(commands.Cog):
             # Format for Discord
             message = format_discord_report(result)
             
-            # Send the analysis
-            await interaction.followup.send(message)
+            # Get recommendations for the button
+            diagnosis = result.get("diagnosis", {})
+            recommendations = diagnosis.get("recommendations", [])
+            
+            # Send the analysis with button if there are recommendations
+            if recommendations:
+                view = TweaksButton(recommendations)
+                await interaction.followup.send(message, view=view)
+            else:
+                await interaction.followup.send(message)
             
         except ValueError as e:
             # Handle errors (invalid URL, fetch failures, etc.)
@@ -315,8 +357,16 @@ class SparkCog(commands.Cog):
             # Format for Discord
             message = format_discord_report(result)
             
-            # Send the analysis
-            await interaction.followup.send(message)
+            # Get recommendations for the button
+            diagnosis = result.get("diagnosis", {})
+            recommendations = diagnosis.get("recommendations", [])
+            
+            # Send the analysis with button if there are recommendations
+            if recommendations:
+                view = TweaksButton(recommendations)
+                await interaction.followup.send(message, view=view)
+            else:
+                await interaction.followup.send(message)
             
         except ValueError as e:
             error_message = f"❌ **Error:**\n{e!s}"
