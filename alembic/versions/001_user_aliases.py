@@ -40,13 +40,15 @@ def upgrade() -> None:
     constraints = inspector.get_unique_constraints('server_alias')
     constraint_names = [c['name'] for c in constraints]
     
-    # Drop old unique constraint if it exists
-    if 'uq_alias' in constraint_names:
-        op.drop_constraint('uq_alias', 'server_alias', type_='unique')
-    
-    # Add new unique constraint if it doesn't exist
-    if 'uq_alias_user' not in constraint_names:
-        op.create_unique_constraint('uq_alias_user', 'server_alias', ['alias', 'discord_user_id'])
+    # Use batch mode for SQLite to handle constraint changes
+    with op.batch_alter_table('server_alias', schema=None) as batch_op:
+        # Drop old unique constraint if it exists
+        if 'uq_alias' in constraint_names:
+            batch_op.drop_constraint('uq_alias', type_='unique')
+        
+        # Add new unique constraint if it doesn't exist
+        if 'uq_alias_user' not in constraint_names:
+            batch_op.create_unique_constraint('uq_alias_user', ['alias', 'discord_user_id'])
 
 
 def downgrade() -> None:
@@ -59,27 +61,29 @@ def downgrade() -> None:
     constraints = inspector.get_unique_constraints('server_alias')
     constraint_names = [c['name'] for c in constraints]
     
-    # Remove new unique constraint if it exists
-    if 'uq_alias_user' in constraint_names:
-        op.drop_constraint('uq_alias_user', 'server_alias', type_='unique')
-    
-    # Restore old unique constraint if it doesn't exist
-    # NOTE: This will fail if there are duplicate aliases in the table
-    if 'uq_alias' not in constraint_names:
-        from sqlalchemy.exc import IntegrityError
-        try:
-            op.create_unique_constraint('uq_alias', 'server_alias', ['alias'])
-        except IntegrityError as e:
-            # Log the error - cannot restore constraint due to duplicate aliases
-            import structlog
-            log = structlog.get_logger()
-            log.error("downgrade_failed", 
-                     reason="Duplicate aliases exist, cannot restore unique constraint",
-                     error=str(e))
-            raise RuntimeError(
-                "Cannot downgrade: duplicate aliases exist in the table. "
-                "Clean up duplicate aliases before downgrading."
-            ) from e
+    # Use batch mode for SQLite to handle constraint changes
+    with op.batch_alter_table('server_alias', schema=None) as batch_op:
+        # Remove new unique constraint if it exists
+        if 'uq_alias_user' in constraint_names:
+            batch_op.drop_constraint('uq_alias_user', type_='unique')
+        
+        # Restore old unique constraint if it doesn't exist
+        # NOTE: This will fail if there are duplicate aliases in the table
+        if 'uq_alias' not in constraint_names:
+            from sqlalchemy.exc import IntegrityError
+            try:
+                batch_op.create_unique_constraint('uq_alias', ['alias'])
+            except IntegrityError as e:
+                # Log the error - cannot restore constraint due to duplicate aliases
+                import structlog
+                log = structlog.get_logger()
+                log.error("downgrade_failed", 
+                         reason="Duplicate aliases exist, cannot restore unique constraint",
+                         error=str(e))
+                raise RuntimeError(
+                    "Cannot downgrade: duplicate aliases exist in the table. "
+                    "Clean up duplicate aliases before downgrading."
+                ) from e
     
     # Remove created_at column if it exists
     columns = [col['name'] for col in inspector.get_columns('server_alias')]
