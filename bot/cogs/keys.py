@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import aiohttp
 import discord
+import structlog
 from discord import app_commands
 from discord.ext import commands
 
@@ -16,6 +17,8 @@ from ..services.credentials import (
     wipe_all_credentials,
     wipe_user_credentials,
 )
+
+log = structlog.get_logger()
 
 
 async def validate_token(panel_url: str, token: str) -> bool:
@@ -44,40 +47,85 @@ class KeysCog(commands.Cog):
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def link(self, inter: discord.Interaction, panel_url: str, token: str, label: int | None = None):
         await inter.response.defer(ephemeral=True)
-        if label is not None and (label < 1 or label > 9):
-            await inter.followup.send("Label must be 1-9.", ephemeral=True)
-            return
-        ok = await validate_token(panel_url, token)
-        if not ok:
-            await inter.followup.send("Token validation failed. Check panel URL and token.", ephemeral=True)
-            return
-        async with SessionLocal() as s:
-            cred = await add_or_update_credential(
-                s, inter.user.id, panel_url, token, label=str(label) if label else None
+        
+        try:
+            if label is not None and (label < 1 or label > 9):
+                await inter.followup.send("Label must be 1-9.", ephemeral=True)
+                return
+            
+            log.info("link_command_started", user_id=inter.user.id, panel_url=panel_url, has_label=label is not None)
+            
+            # Validate token with panel
+            ok = await validate_token(panel_url, token)
+            if not ok:
+                log.warning("token_validation_failed", user_id=inter.user.id, panel_url=panel_url)
+                await inter.followup.send("Token validation failed. Check panel URL and token.", ephemeral=True)
+                return
+            
+            log.info("token_validated", user_id=inter.user.id, panel_url=panel_url)
+            
+            # Save credential to database
+            try:
+                async with SessionLocal() as s:
+                    cred = await add_or_update_credential(
+                        s, inter.user.id, panel_url, token, label=str(label) if label else None
+                    )
+                log.info("credential_saved", user_id=inter.user.id, panel_url=panel_url, label=cred.label)
+            except Exception as db_err:
+                log.error("database_error_saving_credential", 
+                         user_id=inter.user.id, 
+                         panel_url=panel_url,
+                         error=str(db_err),
+                         error_type=type(db_err).__name__)
+                await inter.followup.send(
+                    f"❌ Database error: Failed to save credentials. Please contact an administrator.\n"
+                    f"Error: {type(db_err).__name__}",
+                    ephemeral=True
+                )
+                return
+            
+            masked = "…" + cred.token_fingerprint
+            await inter.followup.send(
+                f"Linked **{panel_url}** as label **{cred.label or '-'}** (fp `{masked}`).",
+                ephemeral=True,
             )
-        masked = "…" + cred.token_fingerprint
-        await inter.followup.send(
-            f"Linked **{panel_url}** as label **{cred.label or '-'}** (fp `{masked}`).",
-            ephemeral=True,
-        )
+            log.info("link_command_completed", user_id=inter.user.id, panel_url=panel_url)
+            
+        except Exception as e:
+            log.error("link_command_error", 
+                     user_id=inter.user.id,
+                     error=str(e),
+                     error_type=type(e).__name__)
+            await inter.followup.send(
+                f"❌ An unexpected error occurred: {type(e).__name__}\n"
+                f"Please try again or contact an administrator.",
+                ephemeral=True
+            )
 
     @app_commands.command(name="keys_list", description="List your linked keys.")
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def keys_list(self, inter: discord.Interaction):
         await inter.response.defer(ephemeral=True)
-        async with SessionLocal() as s:
-            rows = await list_user_credentials(s, inter.user.id)
-        if not rows:
-            await inter.followup.send("You have no linked keys. Use `/link` to add one.", ephemeral=True)
-            return
-        lines: list[str] = []
-        for r in rows:
-            masked = "…" + r.token_fingerprint
-            lines.append(
-                f"• `{r.panel_url}` — label `{r.label or '-'}` — default: {'yes' if r.is_default else 'no'} — last_used: {r.last_used_at or '-'} — fp `{masked}`"
+        try:
+            async with SessionLocal() as s:
+                rows = await list_user_credentials(s, inter.user.id)
+            if not rows:
+                await inter.followup.send("You have no linked keys. Use `/link` to add one.", ephemeral=True)
+                return
+            lines: list[str] = []
+            for r in rows:
+                masked = "…" + r.token_fingerprint
+                lines.append(
+                    f"• `{r.panel_url}` — label `{r.label or '-'}` — default: {'yes' if r.is_default else 'no'} — last_used: {r.last_used_at or '-'} — fp `{masked}`"
+                )
+            await inter.followup.send("\n".join(lines), ephemeral=True)
+        except Exception as e:
+            log.error("keys_list_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
+            await inter.followup.send(
+                f"❌ Database error: Failed to retrieve credentials.\nError: {type(e).__name__}",
+                ephemeral=True
             )
-        await inter.followup.send("\n".join(lines), ephemeral=True)
 
     @app_commands.command(name="keys_set_default", description="Set your default key for a panel.")
     @app_commands.describe(panel_url="Panel URL", label="Label (1-9)")
@@ -85,12 +133,19 @@ class KeysCog(commands.Cog):
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def keys_set_default(self, inter: discord.Interaction, panel_url: str, label: int):
         await inter.response.defer(ephemeral=True)
-        async with SessionLocal() as s:
-            changed = await set_default_credential(s, inter.user.id, panel_url, str(label))
-        if changed:
-            await inter.followup.send(f"Default set to label `{label}` for `{panel_url}`.", ephemeral=True)
-        else:
-            await inter.followup.send("No such key for that label/panel.", ephemeral=True)
+        try:
+            async with SessionLocal() as s:
+                changed = await set_default_credential(s, inter.user.id, panel_url, str(label))
+            if changed:
+                await inter.followup.send(f"Default set to label `{label}` for `{panel_url}`.", ephemeral=True)
+            else:
+                await inter.followup.send("No such key for that label/panel.", ephemeral=True)
+        except Exception as e:
+            log.error("keys_set_default_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
+            await inter.followup.send(
+                f"❌ Database error: Failed to update default key.\nError: {type(e).__name__}",
+                ephemeral=True
+            )
 
     @app_commands.command(name="unlink", description="Remove one of your keys (or the default if label omitted).")
     @app_commands.describe(panel_url="Panel URL", label="Optional label to remove")
@@ -98,12 +153,19 @@ class KeysCog(commands.Cog):
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def unlink(self, inter: discord.Interaction, panel_url: str, label: int | None = None):
         await inter.response.defer(ephemeral=True)
-        async with SessionLocal() as s:
-            removed = await delete_credential(s, inter.user.id, panel_url, str(label) if label else None)
-        if removed:
-            await inter.followup.send("Removed.", ephemeral=True)
-        else:
-            await inter.followup.send("No matching key found.", ephemeral=True)
+        try:
+            async with SessionLocal() as s:
+                removed = await delete_credential(s, inter.user.id, panel_url, str(label) if label else None)
+            if removed:
+                await inter.followup.send("Removed.", ephemeral=True)
+            else:
+                await inter.followup.send("No matching key found.", ephemeral=True)
+        except Exception as e:
+            log.error("unlink_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
+            await inter.followup.send(
+                f"❌ Database error: Failed to remove credential.\nError: {type(e).__name__}",
+                ephemeral=True
+            )
 
     @app_commands.command(name="keys_wipe_mine", description='Delete ALL your keys (type "CONFIRM").')
     @app_commands.describe(confirm='Type exactly "CONFIRM" to proceed')
@@ -114,9 +176,16 @@ class KeysCog(commands.Cog):
         if confirm != "CONFIRM":
             await inter.followup.send("Cancelled.", ephemeral=True)
             return
-        async with SessionLocal() as s:
-            count = await wipe_user_credentials(s, inter.user.id)
-        await inter.followup.send(f"Wiped {count} key(s) from your account.", ephemeral=True)
+        try:
+            async with SessionLocal() as s:
+                count = await wipe_user_credentials(s, inter.user.id)
+            await inter.followup.send(f"Wiped {count} key(s) from your account.", ephemeral=True)
+        except Exception as e:
+            log.error("keys_wipe_mine_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
+            await inter.followup.send(
+                f"❌ Database error: Failed to wipe credentials.\nError: {type(e).__name__}",
+                ephemeral=True
+            )
 
     @app_commands.command(name="keys_wipe_all", description='(Admin) Delete ALL keys (type "CONFIRM").')
     @app_commands.describe(confirm='Type exactly "CONFIRM" to proceed')
@@ -128,9 +197,16 @@ class KeysCog(commands.Cog):
         if confirm != "CONFIRM":
             await inter.followup.send("Cancelled.", ephemeral=True)
             return
-        async with SessionLocal() as s:
-            count = await wipe_all_credentials(s)
-        await inter.followup.send(f"Wiped ALL keys: {count} removed.", ephemeral=True)
+        try:
+            async with SessionLocal() as s:
+                count = await wipe_all_credentials(s)
+            await inter.followup.send(f"Wiped ALL keys: {count} removed.", ephemeral=True)
+        except Exception as e:
+            log.error("keys_wipe_all_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
+            await inter.followup.send(
+                f"❌ Database error: Failed to wipe all credentials.\nError: {type(e).__name__}",
+                ephemeral=True
+            )
 
 
 async def setup(bot: commands.Bot):

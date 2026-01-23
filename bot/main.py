@@ -26,7 +26,14 @@ class Bot(commands.Bot):
         self.purge_loop.start()
 
     async def setup_hook(self) -> None:
-        await init_db()
+        try:
+            log.info("initializing_database")
+            await init_db()
+            log.info("database_initialized")
+        except Exception as e:
+            log.error("database_initialization_failed", error=str(e), error_type=type(e).__name__)
+            raise
+        
         self.http_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         if settings.app_api_key:
             self.app_client = PteroApp(self.http_session)
