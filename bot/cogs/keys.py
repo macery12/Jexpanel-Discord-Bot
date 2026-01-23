@@ -64,13 +64,41 @@ class KeysCog(commands.Cog):
                 f"Linked **{panel_url}** as label **{cred.label or '-'}** (fp `{masked}`).",
                 ephemeral=True,
             )
+        except ValueError as e:
+            # Catch encryption key configuration errors
+            error_msg = str(e)
+            if "ENCRYPTION_KEY" in error_msg or "32 bytes" in error_msg:
+                log.error("encryption_key_configuration_error", user_id=inter.user.id, error=error_msg)
+                await inter.followup.send(
+                    "❌ Server configuration error: Invalid encryption key.\n"
+                    "Please contact an administrator to fix the ENCRYPTION_KEY setting.",
+                    ephemeral=True
+                )
+            else:
+                log.error("link_command_error", user_id=inter.user.id, error=error_msg, error_type="ValueError")
+                await inter.followup.send(
+                    f"❌ Failed to save credentials. Please contact an administrator.\n"
+                    f"Error: ValueError",
+                    ephemeral=True
+                )
         except Exception as e:
-            log.error("link_command_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
-            await inter.followup.send(
-                f"❌ Failed to save credentials. Please contact an administrator.\n"
-                f"Error: {type(e).__name__}",
-                ephemeral=True
-            )
+            error_msg = str(e)
+            # Check for base64 padding errors
+            if "padding" in error_msg.lower() or "binascii.Error" in type(e).__name__:
+                log.error("encryption_key_padding_error", user_id=inter.user.id, error=error_msg, error_type=type(e).__name__)
+                await inter.followup.send(
+                    "❌ Server configuration error: Encryption key is not properly base64 encoded.\n"
+                    "Please contact an administrator to regenerate the ENCRYPTION_KEY using:\n"
+                    "`openssl rand -base64 32`",
+                    ephemeral=True
+                )
+            else:
+                log.error("link_command_error", user_id=inter.user.id, error=error_msg, error_type=type(e).__name__)
+                await inter.followup.send(
+                    f"❌ Failed to save credentials. Please contact an administrator.\n"
+                    f"Error: {type(e).__name__}",
+                    ephemeral=True
+                )
 
     @app_commands.command(name="keys_list", description="List your linked keys.")
     @app_commands.allowed_installs(guilds=True, users=True)
