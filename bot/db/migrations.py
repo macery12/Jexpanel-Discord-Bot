@@ -31,19 +31,23 @@ async def run_migrations(engine: AsyncEngine) -> None:
     Args:
         engine: The async SQLAlchemy engine
     """
-    # Create Alembic config
-    alembic_cfg = _get_alembic_config()
-    
-    # Run migrations in a sync context (Alembic doesn't support async yet)
-    def run_upgrade(connection):
-        alembic_cfg.attributes['connection'] = connection
-        command.upgrade(alembic_cfg, "head")
-    
-    # Use the engine to run migrations synchronously
-    async with engine.begin() as conn:
-        await conn.run_sync(run_upgrade)
-    
-    log.info("database_migrations_applied")
+    try:
+        # Create Alembic config
+        alembic_cfg = _get_alembic_config()
+        
+        # Run migrations in a sync context (Alembic doesn't support async yet)
+        def run_upgrade(connection):
+            alembic_cfg.attributes['connection'] = connection
+            command.upgrade(alembic_cfg, "head")
+        
+        # Use the engine to run migrations synchronously
+        async with engine.begin() as conn:
+            await conn.run_sync(run_upgrade)
+        
+        log.info("database_migrations_applied")
+    except Exception as e:
+        log.error("migration_failed", error=str(e), error_type=type(e).__name__)
+        raise
 
 
 def create_migration(message: str) -> None:

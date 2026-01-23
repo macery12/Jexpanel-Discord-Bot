@@ -24,7 +24,17 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # Use the database URL from bot settings
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Convert async database URLs to sync versions for Alembic
+database_url = settings.database_url
+# Alembic uses synchronous SQLAlchemy, so we need to convert async URLs
+if "+aiosqlite" in database_url:
+    # SQLite: sqlite+aiosqlite -> sqlite
+    database_url = database_url.replace("+aiosqlite", "")
+elif "+asyncpg" in database_url:
+    # PostgreSQL: postgresql+asyncpg -> postgresql+psycopg2
+    database_url = database_url.replace("+asyncpg", "+psycopg2")
+
+config.set_main_option("sqlalchemy.url", database_url)
 
 
 def run_migrations_offline() -> None:
