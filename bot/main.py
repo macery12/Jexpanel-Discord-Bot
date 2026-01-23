@@ -27,9 +27,7 @@ class Bot(commands.Bot):
 
     async def setup_hook(self) -> None:
         try:
-            log.info("initializing_database")
             await init_db()
-            log.info("database_initialized")
         except Exception as e:
             log.error("database_initialization_failed", error=str(e), error_type=type(e).__name__)
             raise

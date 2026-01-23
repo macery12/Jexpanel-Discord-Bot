@@ -47,42 +47,25 @@ class KeysCog(commands.Cog):
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def link(self, inter: discord.Interaction, panel_url: str, token: str, label: int | None = None):
         await inter.response.defer(ephemeral=True)
-        
         try:
             if label is not None and (label < 1 or label > 9):
                 await inter.followup.send("Label must be 1-9.", ephemeral=True)
                 return
-            
-            log.info("link_command_started", user_id=inter.user.id, panel_url=panel_url, has_label=label is not None)
-            
-            # Validate token with panel
             ok = await validate_token(panel_url, token)
             if not ok:
-                log.warning("token_validation_failed", user_id=inter.user.id, panel_url=panel_url)
                 await inter.followup.send("Token validation failed. Check panel URL and token.", ephemeral=True)
                 return
-            
-            log.info("token_validated", user_id=inter.user.id, panel_url=panel_url)
-            
-            # Save credential to database
             async with SessionLocal() as s:
                 cred = await add_or_update_credential(
                     s, inter.user.id, panel_url, token, label=str(label) if label else None
                 )
-            log.info("credential_saved", user_id=inter.user.id, panel_url=panel_url, label=cred.label)
-            
             masked = "…" + cred.token_fingerprint
             await inter.followup.send(
                 f"Linked **{panel_url}** as label **{cred.label or '-'}** (fp `{masked}`).",
                 ephemeral=True,
             )
-            log.info("link_command_completed", user_id=inter.user.id, panel_url=panel_url)
-            
         except Exception as e:
-            log.error("link_command_error", 
-                     user_id=inter.user.id,
-                     error=str(e),
-                     error_type=type(e).__name__)
+            log.error("link_command_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
             await inter.followup.send(
                 f"❌ Failed to save credentials. Please contact an administrator.\n"
                 f"Error: {type(e).__name__}",

@@ -40,8 +40,6 @@ async def run_migrations(engine: AsyncEngine) -> None:
             alembic_cfg.attributes['connection'] = connection
             command.upgrade(alembic_cfg, "head")
         
-        log.info("running_database_migrations")
-        
         # Use the engine to run migrations synchronously
         async with engine.begin() as conn:
             await conn.run_sync(run_upgrade)
