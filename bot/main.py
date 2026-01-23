@@ -26,7 +26,12 @@ class Bot(commands.Bot):
         self.purge_loop.start()
 
     async def setup_hook(self) -> None:
-        await init_db()
+        try:
+            await init_db()
+        except Exception as e:
+            log.error("database_initialization_failed", error=str(e), error_type=type(e).__name__)
+            raise
+        
         self.http_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         if settings.app_api_key:
             self.app_client = PteroApp(self.http_session)
@@ -35,12 +40,18 @@ class Bot(commands.Bot):
         await self.load_extension("bot.cogs.server")
         await self.load_extension("bot.cogs.admin")
         await self.load_extension("bot.cogs.app_admin")
+        await self.load_extension("bot.cogs.spark")
 
         if settings.command_sync_scope == "dev" and settings.discord_guild_id:
             guild = discord.Object(id=settings.discord_guild_id)
             # Sync commands to the dev guild only (no copy_global_to to avoid duplicates)
             synced = await self.tree.sync(guild=guild)
-            log.info("commands_synced", scope="dev", guild=settings.discord_guild_id, count=len(synced))
+            log.info(
+                "commands_synced",
+                scope="dev",
+                guild=settings.discord_guild_id,
+                count=len(synced),
+            )
         else:
             synced = await self.tree.sync()
             log.info("commands_synced", scope="global", count=len(synced))

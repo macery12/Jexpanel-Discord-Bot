@@ -38,7 +38,6 @@ class UserCredential(Base):
     panel_url: Mapped[str] = mapped_column(String, index=True)
     label: Mapped[str | None] = mapped_column(String(8), nullable=True)
     ciphertext_b64: Mapped[str] = mapped_column(String)
-    salt_b64: Mapped[str | None] = mapped_column(String, nullable=True)  # Salt for key derivation
     key_version: Mapped[int] = mapped_column(Integer, default=1)
     token_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)

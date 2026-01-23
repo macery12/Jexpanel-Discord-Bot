@@ -41,6 +41,14 @@ docker compose pull && docker compose up -d
 
 ## Commands
 
+### Performance Analysis
+
+- **`/spark <url>`** — Analyze Minecraft Spark profiler reports (NEW!)
+  - Identifies performance bottlenecks in plugins, mods, and vanilla
+  - Detects 7 categories of issues: CPU overuse, blocking I/O, entity lag, tile entity lag, redstone lag, scheduler abuse, and GC pressure
+  - Provides actionable recommendations
+  - See [SPARK_ANALYZER.md](SPARK_ANALYZER.md) for details
+
 ### Server Management
 
 - **`/server <server>`** — Interactive menu for server actions (NEW!)
@@ -105,28 +113,6 @@ For developers making schema changes, see [alembic/README.md](alembic/README.md)
 - **Per-user keys**: users link their own **Client API** keys with `/link` (keys encrypted at rest via `ENCRYPTION_KEY`).
 - **Admin visibility** (`/panel_*`): set **Application API** key in `PTERO_APP_API_KEY` and your `PTERO_PANEL_URL`.
 - Optional: `PTERO_CLIENT_API_KEY` as a fallback client key (per-user keys preferred).
-
-### Security
-
-This bot implements industry-standard security for API key storage:
-
-- **🔐 AES-256-GCM encryption** for all stored API keys
-- **🔑 Per-user key derivation** using Argon2id (OWASP recommended)
-- **🧂 Random salts** prevent rainbow table attacks
-- **✅ Authenticated encryption** detects tampering
-- **🔄 Key versioning** for rotation support
-
-**Important:** Generate a secure 256-bit encryption key:
-```bash
-openssl rand -hex 32
-```
-
-Add it to your `.env` file:
-```
-ENCRYPTION_KEY=your_64_character_hex_key_here
-```
-
-For detailed security documentation, see [SECURITY.md](SECURITY.md).
 
 ---
 
