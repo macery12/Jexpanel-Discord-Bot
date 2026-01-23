@@ -1,5 +1,19 @@
 services:
-  db:
+  JexBot:
+    container_name: JexBot
+    image: ghcr.io/macery12/jexpanel-discord-bot:latest
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      JexDB:
+        condition: service_healthy
+    volumes:
+      - ./data:/data
+    environment:
+      - TZ=UTC
+
+  JexDB:
+    container_name: JexDB
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -13,18 +27,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  bot:
-    image: ghcr.io/macery12/jexpanel-discord-bot:latest
-    env_file: .env
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - ./data:/data
-    environment:
-      - TZ=UTC
 
 volumes:
   pg_data: {}
