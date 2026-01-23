@@ -65,24 +65,11 @@ class KeysCog(commands.Cog):
             log.info("token_validated", user_id=inter.user.id, panel_url=panel_url)
             
             # Save credential to database
-            try:
-                async with SessionLocal() as s:
-                    cred = await add_or_update_credential(
-                        s, inter.user.id, panel_url, token, label=str(label) if label else None
-                    )
-                log.info("credential_saved", user_id=inter.user.id, panel_url=panel_url, label=cred.label)
-            except Exception as db_err:
-                log.error("database_error_saving_credential", 
-                         user_id=inter.user.id, 
-                         panel_url=panel_url,
-                         error=str(db_err),
-                         error_type=type(db_err).__name__)
-                await inter.followup.send(
-                    f"❌ Database error: Failed to save credentials. Please contact an administrator.\n"
-                    f"Error: {type(db_err).__name__}",
-                    ephemeral=True
+            async with SessionLocal() as s:
+                cred = await add_or_update_credential(
+                    s, inter.user.id, panel_url, token, label=str(label) if label else None
                 )
-                return
+            log.info("credential_saved", user_id=inter.user.id, panel_url=panel_url, label=cred.label)
             
             masked = "…" + cred.token_fingerprint
             await inter.followup.send(
@@ -97,8 +84,8 @@ class KeysCog(commands.Cog):
                      error=str(e),
                      error_type=type(e).__name__)
             await inter.followup.send(
-                f"❌ An unexpected error occurred: {type(e).__name__}\n"
-                f"Please try again or contact an administrator.",
+                f"❌ Failed to save credentials. Please contact an administrator.\n"
+                f"Error: {type(e).__name__}",
                 ephemeral=True
             )
 
@@ -123,7 +110,7 @@ class KeysCog(commands.Cog):
         except Exception as e:
             log.error("keys_list_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
             await inter.followup.send(
-                f"❌ Database error: Failed to retrieve credentials.\nError: {type(e).__name__}",
+                f"❌ Failed to retrieve credentials.\nError: {type(e).__name__}",
                 ephemeral=True
             )
 
@@ -143,7 +130,7 @@ class KeysCog(commands.Cog):
         except Exception as e:
             log.error("keys_set_default_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
             await inter.followup.send(
-                f"❌ Database error: Failed to update default key.\nError: {type(e).__name__}",
+                f"❌ Failed to update default key.\nError: {type(e).__name__}",
                 ephemeral=True
             )
 
@@ -163,7 +150,7 @@ class KeysCog(commands.Cog):
         except Exception as e:
             log.error("unlink_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
             await inter.followup.send(
-                f"❌ Database error: Failed to remove credential.\nError: {type(e).__name__}",
+                f"❌ Failed to remove credential.\nError: {type(e).__name__}",
                 ephemeral=True
             )
 
@@ -183,7 +170,7 @@ class KeysCog(commands.Cog):
         except Exception as e:
             log.error("keys_wipe_mine_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
             await inter.followup.send(
-                f"❌ Database error: Failed to wipe credentials.\nError: {type(e).__name__}",
+                f"❌ Failed to wipe credentials.\nError: {type(e).__name__}",
                 ephemeral=True
             )
 
@@ -204,7 +191,7 @@ class KeysCog(commands.Cog):
         except Exception as e:
             log.error("keys_wipe_all_error", user_id=inter.user.id, error=str(e), error_type=type(e).__name__)
             await inter.followup.send(
-                f"❌ Database error: Failed to wipe all credentials.\nError: {type(e).__name__}",
+                f"❌ Failed to wipe all credentials.\nError: {type(e).__name__}",
                 ephemeral=True
             )
 
