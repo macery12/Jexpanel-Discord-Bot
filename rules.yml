@@ -622,31 +622,6 @@ mods:
     extra_checks:
     - Playercount and chunkgen correlation
     modid: adastra
-  yungs:
-    display_name: YUNG's Structure Mods (collection)
-    match:
-    - yungs
-    - yungsbetter
-    - regex:(?i)\byung'?s\b
-    - yung_structures
-    severity: 4
-    tags:
-    - structures
-    - worldgen
-    - chunkgen
-    known_issues:
-    - Structure-heavy worldgen can increase chunk generation time and cause first-visit spikes.
-    symptoms:
-    - Lag spikes aligned with exploration and new chunk generation.
-    tweaks:
-    - Reduce structure frequency where configs allow.
-    - Pregenerate overworld/nether/end depending on pack usage.
-    pitfalls:
-    - Multiple structure mods stacked at high density.
-    extra_checks:
-    - Chunkgen spike indicators
-    - Player exploration patterns
-    modid: yungs
   whendungeonsarise:
     display_name: When Dungeons Arise
     match:
